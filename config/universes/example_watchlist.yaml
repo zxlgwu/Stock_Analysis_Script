@@ -1,0 +1,12 @@
+name: example_watchlist
+securities:
+  - ticker: AAPL
+    name: Apple Inc.
+    exchange: NASDAQ
+    sector: Information Technology
+    industry: Technology Hardware, Storage & Peripherals
+  - ticker: MSFT
+    name: Microsoft Corporation
+    exchange: NASDAQ
+    sector: Information Technology
+    industry: Systems Software

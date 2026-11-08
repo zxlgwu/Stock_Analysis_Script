@@ -1,0 +1,17 @@
+.DS_Store
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Generated data and reports
+data/
+output/
+
+# Older unrelated project files that live in this folder
+Stock2.py
+seekingAlpha_login_test.py
+converged_stocks_plots.pdf

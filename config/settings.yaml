@@ -1,0 +1,49 @@
+universes:
+  - sp500
+  # - nasdaq
+  # - custom:example_watchlist
+
+sources:
+  news: [finnhub, sec_edgar_8k, gdelt, rss]
+  fundamentals: sec_xbrl
+  prices: yfinance
+
+database:
+  path: data/stock_agent.db
+
+llm:
+  roles:
+    filter:   { provider: litellm, model: "<cheap-model>" }
+    analysis: { provider: litellm, model: "<mid-model>" }
+    thesis:   { provider: litellm, model: "<mid-model>" }
+    embed:    { provider: local,   model: "all-MiniLM-L6-v2" }
+  weekly_budget_usd: 10
+  monthly_budget_usd: 40
+  cache: true
+
+scoring:
+  decay_days: { mid: 90, long: 365 }
+  weights: { news_mid: 0.25, news_long: 0.25, quality: 0.20, value: 0.15, technical: 0.10, risk: 0.05 }
+
+prices:
+  history_years: 5
+  benchmarks: [SPY, XLK, XLF, XLV, XLY, XLP, XLE, XLI, XLB, XLU, XLRE, XLC]
+  batch_size: 25
+
+report:
+  top_n: 10
+  recipients: ["you@example.com"]
+  charts:
+    years: 5
+    moving_averages: [20, 60, 120]
+    show_event_markers: true
+    show_benchmark_panel: false
+    inline_png: true
+    attach_pdf: true
+
+schedule:
+  collect: "daily 18:00 America/New_York"
+  weekly_report: "saturday 08:00 America/Chicago"
+
+alerts:
+  critical_filings: false
