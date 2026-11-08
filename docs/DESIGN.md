@@ -10,8 +10,8 @@ Scope: Weekly news-driven analysis of public companies, producing mid- and long-
 ### Goals
 1. Continuously collect news and regulatory filings relevant to the companies in a configurable **universe** (initially the full S&P 500).
 2. For each material event, estimate **which companies are affected, in which direction, on which revenue line, how much, and over what horizon** (mid term: 6–18 months; long term: 2–5 years).
-3. Combine news impact with fundamentals, valuation, and a technical timing signal into a ranked list of investment candidates.
-4. Email a weekly report with ranked ideas, the reasoning behind them, risks, and source links.
+3. Combine news impact with fundamentals, valuation, **multi-year price history**, and a technical timing signal into a ranked list of investment candidates.
+4. Email a weekly report with ranked ideas, the reasoning behind them, risks, source links, and a **multi-year price chart** for every highlighted company.
 5. Log every prediction so accuracy can be measured over time.
 
 ### Non-goals (v1)
@@ -58,6 +58,7 @@ flowchart TB
     DB[(SQLite database)]
 
     subgraph Decision
+        PS[Price history stats<br/>multi-year returns, drawdown,<br/>volatility, vs. benchmark]
         S[Scoring + decay]
         T[Technical timing signal]
         RK[Ranking]
@@ -65,6 +66,7 @@ flowchart TB
     end
 
     subgraph Output
+        CH[Price charts<br/>multi-year, with moving averages]
         E[Email report]
         EV[Evaluation / prediction log]
     end
@@ -75,9 +77,12 @@ flowchart TB
     KB --> LA
     LA --> DB
     F1 & P1 --> DB
+    DB --> PS
+    PS --> S & TH
     DB --> S --> RK
     T --> RK
     RK --> TH --> E
+    RK --> CH --> E
     DB --> EV
 ```
 
@@ -110,10 +115,12 @@ Runs once per week after Friday's close (e.g. Saturday morning), covering everyt
 | 5. Rule pre-filter | Drop low-value items (stock-price recaps, listicles, "stocks to watch", duplicate wire copies) | reduced cluster set |
 | 6. LLM materiality filter | Cheap model, batched: "Is this material to any company's revenue/earnings over 6+ months?" | `materiality` flag + reason |
 | 7. LLM impact analysis | Stronger model, one call per material cluster, returns structured impacts per affected ticker | `impacts` (the prediction log) |
-| 8. Scoring | Aggregate impacts with time decay; merge fundamentals, valuation, technicals | `scores_weekly` |
-| 9. Ranking + thesis | Pick top candidates and biggest week-over-week changes; LLM writes concise thesis/risks | `recommendations` |
-| 10. Evaluation | Compare past predictions with realized revenue/price outcomes | `evaluation_metrics` |
-| 11. Email | Render the weekly HTML report, send, record delivery | `reports_sent` |
+| 8. Price history stats | Compute multi-year return, drawdown, volatility, and benchmark-relative statistics for every ticker (Section 8.5) | `price_stats_weekly` |
+| 9. Scoring | Aggregate impacts with time decay; merge fundamentals, valuation, price history, technicals | `scores_weekly` |
+| 10. Ranking + thesis | Pick top candidates and biggest week-over-week changes; LLM writes concise thesis/risks with price history as context | `recommendations` |
+| 11. Charts | Render a multi-year price chart for every highlighted ticker (Section 10.2) | PNG files + PDF |
+| 12. Evaluation | Compare past predictions with realized revenue/price outcomes | `evaluation_metrics` |
+| 13. Email | Render the weekly HTML report with inline charts and the chart PDF attached, send, record delivery | `reports_sent` |
 
 Each step is idempotent and checkpointed, so a failed run can resume without re-paying for LLM calls. If a week's run is missed, the next run processes all unanalyzed articles.
 
@@ -235,7 +242,7 @@ v1: `EmailNotifier` (SMTP). Later: Slack, Telegram, etc., with no pipeline chang
 | Material corporate events | **SEC EDGAR** 8-K feed + full-text search | Free | Highest-signal source: earnings, M&A, guidance, executive changes, material agreements. Requires a descriptive `User-Agent` header |
 | Macro / industry news | **GDELT** + curated **RSS** feeds (Fed, BLS, major outlets' business feeds, industry trade press) | Free | Captures events not tied to one ticker (tariffs, rates, regulation) |
 | Fundamentals | **SEC XBRL `companyfacts` API** | Free | Official reported revenue, margins, segments; more reliable than scraping |
-| Prices | **yfinance** | Free | Unofficial and occasionally breaks; wrapped behind `PriceSource` so it can be replaced |
+| Prices | **yfinance** | Free | Unofficial and occasionally breaks; wrapped behind `PriceSource` so it can be replaced. A one-time backfill loads **5 years** (configurable) of daily prices for every ticker plus benchmarks (SPY and the 11 SPDR sector ETFs); the daily job then appends new days |
 | Segment/region mix, competitors, suppliers | **10-K text** (EDGAR) parsed by LLM once per year per company | One-off LLM cost | Feeds the knowledge base |
 
 Sources deliberately **not** used in v1: paid newswires, paid transcript services, and scraping sites whose terms forbid it. All can be added later as `NewsSource` plugins.
@@ -277,7 +284,8 @@ Prompt context:
 1. Full cluster text (deduped, truncated to a token limit).
 2. Knowledge-base profile for each directly mentioned company and its linked peers/suppliers/customers (segments, regions, sensitivities).
 3. Recent fundamentals (last 4 quarters revenue/growth/margin).
-4. Instructions to reason about **revenue lines**, **horizon**, and **uncertainty**, and to say "no meaningful impact" when appropriate.
+4. Price history statistics (Section 8.5), so the model can judge how much may already be priced in.
+5. Instructions to reason about **revenue lines**, **horizon**, and **uncertainty**, and to say "no meaningful impact" when appropriate.
 
 Structured output (validated by Pydantic):
 
@@ -310,6 +318,8 @@ class EventAnalysis(BaseModel):
 ### 7.4 Thesis writer
 For the top ~10 ranked companies and the ~5 biggest score changes of the week, a final call summarizes: the investment thesis, supporting events (with links), bear case, key risks, and what would invalidate the thesis.
 
+The thesis writer also receives the company's **price history statistics** (Section 8.5) and must comment on them, e.g. whether a strong positive news view conflicts with a stock that has already tripled in three years, or whether a long drawdown suggests the market is skeptical of the thesis. The same statistics are given to the impact analysis (Section 7.2) to inform the `already_priced_in` judgment.
+
 ---
 
 ## 8. Scoring and ranking
@@ -340,8 +350,8 @@ The pipeline also stores a plain-language companion metric: **net estimated reve
 |---|---|
 | Fundamentals quality | Revenue growth (TTM, YoY), gross/operating margin trend, FCF margin |
 | Valuation | EV/Sales and P/E vs. sector median and vs. own 5-year history |
-| Technical timing | Price trend vs. 50/200-day moving averages and 3/6/12-month momentum (`analysis/technical.py`) |
-| Risk penalty | Recent high volatility, large drawdown, high leverage |
+| Technical timing | Price trend vs. 20/60/120/200-day moving averages, moving-average convergence, and 3/6/12-month momentum (`analysis/technical.py`) |
+| Risk penalty | High multi-year volatility, deep or prolonged drawdown, high leverage (price inputs from Section 8.5) |
 
 ### 8.3 Composite score
 \[
@@ -355,6 +365,22 @@ Initial weights are set in config (e.g. 0.25, 0.25, 0.2, 0.15, 0.1, 0.05) and la
 - **Top mid-term ideas** (rank by Score with higher weight on News_mid and Technical).
 - **Biggest negative changes** in holdings/watchlist (risk alerts).
 
+### 8.5 Price history statistics
+Computed weekly for every ticker from stored daily prices (no LLM, no extra cost) over a configurable lookback (default 5 years):
+
+| Statistic | Definition |
+|---|---|
+| Total return | 1-, 3-, and 5-year price return |
+| CAGR | Annualized return over the full lookback |
+| Relative performance | Return minus SPY and minus the company's sector ETF over 1/3/5 years |
+| Max drawdown | Largest peak-to-trough decline in the lookback, with dates |
+| Current drawdown | % below the highest close in the lookback |
+| Volatility | Annualized standard deviation of daily returns (1 year and full lookback) |
+| Trend position | Price vs. 120- and 200-day moving averages; slope of the 200-day average |
+| MA convergence | Average relative spread of the 20/60/120-day moving averages over the last ~100 trading days (low spread = consolidation) |
+
+These feed the risk penalty and technical timing factors, the impact analysis, the thesis writer, and the "price history" table shown next to each chart in the email.
+
 ---
 
 ## 9. Data model (SQLite first, Postgres later)
@@ -365,7 +391,8 @@ Initial weights are set in config (e.g. 0.25, 0.25, 0.2, 0.15, 0.1, 0.05) and la
 | `universe_members` | universe, ticker, added_at, removed_at |
 | `company_profiles` | ticker, segments_json, regions_json, sensitivities_json, summary, as_of |
 | `company_relations` | src_ticker, dst_ticker, relation, evidence, confidence |
-| `prices` | ticker, date, open, high, low, close, volume |
+| `prices` | ticker, date, open, high, low, close, adj_close, volume |
+| `price_stats_weekly` | week_ending, ticker, ret_1y, ret_3y, ret_5y, cagr, rel_spy_1y/3y/5y, rel_sector_1y/3y/5y, max_drawdown, max_dd_start, max_dd_end, current_drawdown, vol_1y, vol_full, ma_convergence |
 | `fundamentals` | ticker, period_end, revenue, gross_margin, op_margin, fcf, eps, source |
 | `articles` | id, source, url, title, body, published_at, fetched_at, content_hash |
 | `article_clusters` | cluster_id, representative_article_id, first_seen, size |
@@ -385,7 +412,9 @@ Embeddings for deduplication are generated with a small local model (free) and s
 
 ## 10. Email report
 
-Sent weekly as HTML (with a plain-text fallback); a PDF with price charts of highlighted tickers can optionally be attached.
+Sent weekly as HTML (with a plain-text fallback). Every highlighted ticker includes a multi-year price chart embedded in the email, and all charts are also attached as one PDF.
+
+### 10.1 Layout
 
 **Subject:** `Stock Agent — week ending {date} — 3 new ideas, 2 risk alerts`
 
@@ -395,14 +424,36 @@ Sent weekly as HTML (with a plain-text fallback); a PDF with price charts of hig
 3. **Top mid-term ideas** — same format for the mid horizon.
 4. **What changed this week** — tickers entering or leaving the top lists and the events that moved them.
 5. **Risk alerts** — biggest negative score changes, with the triggering event.
-6. **Idea details** — for each highlighted ticker: thesis, bear case, key risks, supporting source links, chart thumbnail.
+6. **Idea details** — for each highlighted ticker: multi-year price chart, price history table (1/3/5-year return vs. SPY and sector, max and current drawdown, volatility), thesis, bear case, key risks, and supporting source links.
 7. **Track record** — short evaluation summary (Section 12).
 8. **Agent health** — articles processed, LLM spend this week / month-to-date vs. budget, any source failures.
 9. **Disclaimer** — research aid, not financial advice.
 
 The optional critical-filing alert (Section 3.1) is a separate, short email sent only when triggered.
 
-Delivery: SMTP (e.g. Gmail with an app password — free). Credentials live in `.env`, never in git.
+### 10.2 Price charts
+
+One chart per highlighted ticker (top long-term ideas, top mid-term ideas, and risk alerts — typically 15–25 charts). The chart style follows the earlier `Stock2.py` plot, reimplemented in `report/charts.py` with matplotlib:
+
+| Element | Specification |
+|---|---|
+| Period | Last 5 years by default (configurable, e.g. 3 or 10) |
+| Price line | Daily close |
+| Moving averages | Dashed 20-, 60-, and 120-day lines (configurable list; a 200-day line can be added for long lookbacks) |
+| Title | Company name, ticker, period (e.g. "5 Years"), and market cap in billions |
+| Event markers (optional) | Vertical markers on dates of material events analyzed for this company, so news can be related to price moves |
+| Benchmark (optional) | Small secondary panel with the stock's performance relative to SPY, rebased to 100 |
+| Axes | Date and price (USD), grid on, legend |
+
+Output and delivery:
+- Each chart is saved as a PNG and embedded inline in the HTML email using content IDs (`cid:`), because many email clients block externally hosted images.
+- All charts are also combined into one PDF (one page per ticker, in ranking order) and attached to the email.
+- Images are rendered at moderate resolution to keep the email well under typical size limits (~2–4 MB for 25 charts).
+- Charts are stored per week under `output/charts/{week_ending}/` so past reports can be regenerated or reviewed.
+
+### 10.3 Delivery
+
+SMTP (e.g. Gmail with an app password — free). Credentials live in `.env`, never in git.
 
 ---
 
@@ -472,7 +523,7 @@ stock-agent/
 │   │   ├── litellm_provider.py
 │   │   ├── router.py            # role → provider/model, budget guard, cache, retries
 │   │   └── prompts/             # versioned prompt templates
-│   ├── analysis/                # materiality.py, impact.py, thesis.py, technical.py
+│   ├── analysis/                # materiality.py, impact.py, thesis.py, technical.py, price_stats.py
 │   ├── scoring/                 # news_score.py, factors.py, composite.py
 │   ├── report/                  # email_report.py, templates/, charts.py
 │   ├── notify/                  # email_smtp.py
@@ -485,6 +536,7 @@ stock-agent/
 ├── tests/
 ├── docs/DESIGN.md
 ├── requirements.txt
+├── output/                      # generated charts and PDFs per week (git-ignored)
 ├── .env.example                 # API keys, SMTP credentials (real .env is git-ignored)
 └── .gitignore
 ```
@@ -518,10 +570,20 @@ scoring:
   decay_days: { mid: 90, long: 365 }
   weights: { news_mid: 0.25, news_long: 0.25, quality: 0.20, value: 0.15, technical: 0.10, risk: 0.05 }
 
+prices:
+  history_years: 5
+  benchmarks: [SPY, XLK, XLF, XLV, XLY, XLP, XLE, XLI, XLB, XLU, XLRE, XLC]
+
 report:
   top_n: 10
   recipients: ["you@example.com"]
-  attach_chart_pdf: true
+  charts:
+    years: 5
+    moving_averages: [20, 60, 120]
+    show_event_markers: true
+    show_benchmark_panel: false
+    inline_png: true
+    attach_pdf: true
 
 schedule:
   collect: "daily 18:00 America/New_York"
@@ -559,12 +621,12 @@ alerts:
 
 | Phase | Deliverables | Done when |
 |---|---|---|
-| **1. Foundation** (≈1 week) | New conda env, package structure, config loader, SQLite schema, `UniverseProvider` (S&P 500, NASDAQ, custom), `PriceSource`, technical signals in `analysis/technical.py` | `collect_daily.py` loads the S&P 500 and stores daily prices; technical signals computed for every ticker |
+| **1. Foundation** (≈1 week) | New conda env, package structure, config loader, SQLite schema, `UniverseProvider` (S&P 500, NASDAQ, custom), `PriceSource` with 5-year backfill, price history statistics, technical signals in `analysis/technical.py`, chart rendering in `report/charts.py` | `collect_daily.py` loads the S&P 500 and stores daily prices; price statistics computed for every ticker; a chart PDF can be generated for any list of tickers |
 | **2. LLM layer** (≈1 week) | `LLMProvider` + LiteLLM adapter, role router, cache, budget guard, cost logging | Same prompt runs against two different vendors by changing only config; spend is logged |
 | **3. News pipeline** (≈1–2 weeks) | Finnhub, SEC 8-K, GDELT/RSS sources; normalize, dedupe, cluster, entity linking, rule pre-filter | One day of S&P 500 news ingested and clustered with ticker links |
 | **4. Impact analysis** (≈1–2 weeks) | Materiality filter, structured impact extraction, guardrails, golden-set test | A week of impacts stored with confidence/horizon; golden set direction accuracy measured |
 | **5. Knowledge base** (≈2 weeks) | XBRL segments/regions, 10-K extraction, relations graph, sensitivity taxonomy | Second-order impacts (peers/suppliers) appear for test events |
-| **6. Scoring + email** (≈1 week) | Composite scoring, ranking, thesis writer, HTML email via SMTP, scheduler | Weekly email arrives automatically with ranked ideas and sources |
+| **6. Scoring + email** (≈1 week) | Composite scoring, ranking, thesis writer, HTML email via SMTP, scheduler | Weekly email arrives automatically with ranked ideas, sources, inline price charts, and the chart PDF attached |
 | **7. Evaluation** (start ≈ week 8, ongoing) | Outcome tracking, IC/quintile metrics, paper portfolio, weekly summary | 3–6 months of forward results available to tune weights |
 
 ---
