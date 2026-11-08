@@ -1,17 +1,17 @@
 # Stock Investment AI Agent — Design Document
 
 Status: Draft v1
-Scope: Daily news-driven analysis of public companies, producing mid- and long-term investment ideas delivered by email.
+Scope: Weekly news-driven analysis of public companies, producing mid- and long-term investment ideas delivered by email.
 
 ---
 
 ## 1. Goals and non-goals
 
 ### Goals
-1. Every day, collect news and regulatory filings relevant to the companies in a configurable **universe** (initially the full S&P 500).
+1. Continuously collect news and regulatory filings relevant to the companies in a configurable **universe** (initially the full S&P 500).
 2. For each material event, estimate **which companies are affected, in which direction, on which revenue line, how much, and over what horizon** (mid term: 6–18 months; long term: 2–5 years).
 3. Combine news impact with fundamentals, valuation, and a technical timing signal into a ranked list of investment candidates.
-4. Email a daily report with ranked ideas, the reasoning behind them, risks, and source links.
+4. Email a weekly report with ranked ideas, the reasoning behind them, risks, and source links.
 5. Log every prediction so accuracy can be measured over time.
 
 ### Non-goals (v1)
@@ -25,7 +25,7 @@ Scope: Daily news-driven analysis of public companies, producing mid- and long-t
 | LLM vendor | Must be swappable via config (OpenAI, Anthropic, Gemini, local models, …) |
 | Budget | ≤ ~$50/month total for data + LLM |
 | Universe | Full S&P 500 first; pluggable for NASDAQ, custom watchlists, other indices |
-| Delivery | Email |
+| Delivery | Weekly email report |
 | Runtime | Python 3.10+, runs on a Mac via a scheduler; portable to a cloud VM later |
 
 ---
@@ -85,26 +85,37 @@ Every arrow crosses a **plugin interface** (Section 4), so sources, LLM vendors,
 
 ---
 
-## 3. Daily pipeline
+## 3. Pipeline schedule
 
-Runs once per day after US market close (e.g. 6:00 PM ET), with an optional morning run for overnight news.
+The agent targets mid- and long-term investing, so analysis and reporting run **weekly**. Only raw data collection runs daily, because some sources (RSS feeds in particular) keep only their most recent items and would lose stories if polled once a week. The daily job uses no LLM calls and costs nothing.
+
+### 3.1 Daily collection job (lightweight, no LLM)
+Runs once per day after US market close (e.g. 6:00 PM ET).
 
 | Step | What happens | Output |
 |---|---|---|
-| 1. Universe refresh | Load tickers from the configured universe(s); weekly refresh of membership | `companies`, `universe_members` |
-| 2. Price + fundamentals | Daily prices for all tickers; fundamentals refreshed when new filings appear | `prices`, `fundamentals` |
-| 3. News ingestion | Pull articles/filings published since the last run from every enabled source | `articles` |
-| 4. Normalize + dedupe | Canonicalize URLs, strip boilerplate, hash text, cluster near-duplicates by embedding similarity | `article_clusters` |
-| 5. Entity linking | Map mentioned companies to tickers; expand to peers/suppliers/customers via knowledge base | `cluster_entities` |
-| 6. Rule pre-filter | Drop low-value items (stock-price recaps, listicles, "stocks to watch", duplicate wire copies) | reduced cluster set |
-| 7. LLM materiality filter | Cheap model, batched: "Is this material to any company's revenue/earnings over 6+ months?" | `materiality` flag + reason |
-| 8. LLM impact analysis | Stronger model, one call per material cluster, returns structured impacts per affected ticker | `impacts` (the prediction log) |
-| 9. Scoring | Aggregate impacts with time decay; merge fundamentals, valuation, technicals | `scores_daily` |
-| 10. Ranking + thesis | Pick top candidates and biggest changes; LLM writes concise thesis/risks | `recommendations` |
-| 11. Email | Render HTML report, send, record delivery | `reports_sent` |
-| 12. Evaluation (weekly) | Compare past predictions with realized revenue/price outcomes | `evaluation_metrics` |
+| 1. News ingestion | Pull articles/filings published since the last run from every enabled source | `articles` |
+| 2. Prices | Store the day's prices for all tickers | `prices` |
+| 3. Critical-filing check (optional) | Rule-based scan of new 8-Ks for watched companies for severe item types (e.g. bankruptcy, delisting notice, auditor change, non-reliance on prior financials); sends a short alert email if found | `alerts_sent` |
 
-Each step is idempotent and checkpointed, so a failed run can resume without re-paying for LLM calls.
+### 3.2 Weekly analysis job
+Runs once per week after Friday's close (e.g. Saturday morning), covering everything collected since the previous run.
+
+| Step | What happens | Output |
+|---|---|---|
+| 1. Universe refresh | Load tickers from the configured universe(s); refresh membership | `companies`, `universe_members` |
+| 2. Fundamentals | Refresh fundamentals for companies that filed a 10-Q/10-K during the week | `fundamentals` |
+| 3. Normalize + dedupe | Canonicalize URLs, strip boilerplate, hash text, cluster near-duplicates across the whole week by embedding similarity (a story repeated over several days becomes one cluster) | `article_clusters` |
+| 4. Entity linking | Map mentioned companies to tickers; expand to peers/suppliers/customers via knowledge base | `cluster_entities` |
+| 5. Rule pre-filter | Drop low-value items (stock-price recaps, listicles, "stocks to watch", duplicate wire copies) | reduced cluster set |
+| 6. LLM materiality filter | Cheap model, batched: "Is this material to any company's revenue/earnings over 6+ months?" | `materiality` flag + reason |
+| 7. LLM impact analysis | Stronger model, one call per material cluster, returns structured impacts per affected ticker | `impacts` (the prediction log) |
+| 8. Scoring | Aggregate impacts with time decay; merge fundamentals, valuation, technicals | `scores_weekly` |
+| 9. Ranking + thesis | Pick top candidates and biggest week-over-week changes; LLM writes concise thesis/risks | `recommendations` |
+| 10. Evaluation | Compare past predictions with realized revenue/price outcomes | `evaluation_metrics` |
+| 11. Email | Render the weekly HTML report, send, record delivery | `reports_sent` |
+
+Each step is idempotent and checkpointed, so a failed run can resume without re-paying for LLM calls. If a week's run is missed, the next run processes all unanalyzed articles.
 
 ---
 
@@ -155,7 +166,7 @@ llm:
     analysis: { provider: litellm, model: "openai/gpt-mini-latest" }
     thesis:   { provider: litellm, model: "anthropic/claude-haiku-latest" }
     embed:    { provider: local,   model: "all-MiniLM-L6-v2" }
-  daily_budget_usd: 1.30
+  weekly_budget_usd: 10
   monthly_budget_usd: 40
 ```
 
@@ -164,7 +175,7 @@ Model names above are placeholders; any vendor/model pair can be configured per 
 Cross-cutting features implemented once, in a wrapper around every provider:
 - **Structured output** validated with Pydantic; one automatic repair retry on invalid JSON.
 - **Response cache** keyed on (model, prompt hash) so reruns are free.
-- **Budget guard**: tracks spend in `llm_calls`; when the daily cap is hit, the pipeline degrades gracefully (analyze only the highest-priority clusters, skip theses) instead of failing.
+- **Budget guard**: tracks spend in `llm_calls`; when the weekly cap is hit, the pipeline degrades gracefully (analyze only the highest-priority clusters, skip theses) instead of failing.
 - **Retry with backoff** and optional fallback provider per role.
 
 ### 4.2 Universe provider
@@ -220,7 +231,7 @@ v1: `EmailNotifier` (SMTP). Later: Slack, Telegram, etc., with no pipeline chang
 
 | Purpose | Source | Cost | Notes |
 |---|---|---|---|
-| Company news | **Finnhub** `company-news` endpoint | Free tier | Per-ticker news; free tier rate limit (~60 calls/min) means ~10 min to sweep 500 tickers — acceptable for a daily batch |
+| Company news | **Finnhub** `company-news` endpoint | Free tier | Per-ticker news; free tier rate limit (~60 calls/min) means ~10 min to sweep 500 tickers — fine for the daily collection job |
 | Material corporate events | **SEC EDGAR** 8-K feed + full-text search | Free | Highest-signal source: earnings, M&A, guidance, executive changes, material agreements. Requires a descriptive `User-Agent` header |
 | Macro / industry news | **GDELT** + curated **RSS** feeds (Fed, BLS, major outlets' business feeds, industry trade press) | Free | Captures events not tied to one ticker (tariffs, rates, regulation) |
 | Fundamentals | **SEC XBRL `companyfacts` API** | Free | Official reported revenue, margins, segments; more reliable than scraping |
@@ -297,7 +308,7 @@ class EventAnalysis(BaseModel):
 - **Prompt versioning:** every stored impact records `prompt_version` and `model`, so results from different prompts/models can be compared during evaluation.
 
 ### 7.4 Thesis writer
-For the top ~10 ranked companies and the ~5 biggest score changes of the day, a final call summarizes: the investment thesis, supporting events (with links), bear case, key risks, and what would invalidate the thesis.
+For the top ~10 ranked companies and the ~5 biggest score changes of the week, a final call summarizes: the investment thesis, supporting events (with links), bear case, key risks, and what would invalidate the thesis.
 
 ---
 
@@ -361,9 +372,10 @@ Initial weights are set in config (e.g. 0.25, 0.25, 0.2, 0.15, 0.1, 0.05) and la
 | `cluster_entities` | cluster_id, ticker, link_type (mentioned / expanded) |
 | `materiality` | cluster_id, material, category, reason, model, prompt_version |
 | `impacts` | id, cluster_id, ticker, relation, direction, revenue_line, est_pct, horizon, confidence, priced_in, reasoning, model, prompt_version, created_at |
-| `scores_daily` | date, ticker, news_mid, news_long, quality, value, technical, risk, composite |
-| `recommendations` | date, ticker, list_name, rank, thesis, risks |
-| `reports_sent` | date, recipients, status, message_id |
+| `scores_weekly` | week_ending, ticker, news_mid, news_long, quality, value, technical, risk, composite |
+| `recommendations` | week_ending, ticker, list_name, rank, thesis, risks |
+| `reports_sent` | week_ending, recipients, status, message_id |
+| `alerts_sent` | date, ticker, filing_url, item_type |
 | `llm_calls` | ts, role, provider, model, input_tokens, output_tokens, cost_usd, cache_hit |
 | `evaluation_metrics` | as_of, metric, horizon, value |
 
@@ -373,18 +385,22 @@ Embeddings for deduplication are generated with a small local model (free) and s
 
 ## 10. Email report
 
-Sent daily as HTML (with a plain-text fallback); a PDF with price charts of highlighted tickers can optionally be attached.
+Sent weekly as HTML (with a plain-text fallback); a PDF with price charts of highlighted tickers can optionally be attached.
 
-**Subject:** `Stock Agent — {date} — 3 new ideas, 2 risk alerts`
+**Subject:** `Stock Agent — week ending {date} — 3 new ideas, 2 risk alerts`
 
 **Sections:**
-1. **Summary** — 3–5 bullet market-moving events of the day.
+1. **Week in review** — 5–8 bullet events from the week most relevant to long-term company performance.
 2. **Top long-term ideas** — table: ticker, company, composite score, net est. revenue impact (long), 1-line thesis.
 3. **Top mid-term ideas** — same format for the mid horizon.
-4. **Risk alerts** — biggest negative score changes, with the triggering event.
-5. **Idea details** — for each highlighted ticker: thesis, bear case, key risks, supporting source links, chart thumbnail.
-6. **Agent health** — articles processed, LLM spend today / month-to-date vs. budget, any source failures.
-7. **Disclaimer** — research aid, not financial advice.
+4. **What changed this week** — tickers entering or leaving the top lists and the events that moved them.
+5. **Risk alerts** — biggest negative score changes, with the triggering event.
+6. **Idea details** — for each highlighted ticker: thesis, bear case, key risks, supporting source links, chart thumbnail.
+7. **Track record** — short evaluation summary (Section 12).
+8. **Agent health** — articles processed, LLM spend this week / month-to-date vs. budget, any source failures.
+9. **Disclaimer** — research aid, not financial advice.
+
+The optional critical-filing alert (Section 3.1) is a separate, short email sent only when triggered.
 
 Delivery: SMTP (e.g. Gmail with an app password — free). Credentials live in `.env`, never in git.
 
@@ -398,11 +414,13 @@ Delivery: SMTP (e.g. Gmail with an app password — free). Credentials live in `
 | Fundamentals + prices | SEC XBRL + yfinance | $0 |
 | Embeddings | Local sentence-transformer model | $0 |
 | Email | Gmail SMTP | $0 |
-| LLM — daily filter | Cheap model, batched headlines only | ~$1–5 |
-| LLM — daily impact analysis | Small/mid model, ~100–200 material clusters/day | ~$10–25 |
-| LLM — theses | ~15 short calls/day | ~$2–5 |
+| LLM — weekly filter | Cheap model, batched headlines only, after week-wide dedupe | ~$1–3 |
+| LLM — weekly impact analysis | Small/mid model, ~300–600 material clusters/week | ~$4–12 |
+| LLM — theses | ~15 short calls/week | <$1 |
 | LLM — knowledge base (amortized) | 10-K extraction for ~500 companies once a year, cheap model | ~$1–3 |
-| **Total** | | **~$15–40**, hard-capped by budget guard |
+| **Total** | | **~$6–20**, hard-capped by budget guard |
+
+Running analysis weekly is cheaper than daily mainly because a story covered over several days is deduplicated into one cluster and analyzed once.
 
 These are estimates; actual spend depends on chosen models and news volume. The budget guard (Section 4.1) enforces the cap regardless.
 
@@ -429,7 +447,7 @@ Evaluation starts on day one; without it there is no way to tell useful advice f
 - **Survivorship bias:** universe membership is stored with dates, so removed S&P members are still evaluated.
 
 ### 12.3 Feedback loop
-Weekly job writes metrics to `evaluation_metrics` and includes a short summary in the Monday email. Composite weights, decay constants, and prompts are changed only via versioned config, so their effect can be measured.
+The weekly job writes metrics to `evaluation_metrics` and includes a short summary in the weekly email. Composite weights, decay constants, and prompts are changed only via versioned config, so their effect can be measured.
 
 ---
 
@@ -461,9 +479,9 @@ stock-agent/
 │   ├── evaluation/              # outcomes.py, metrics.py, paper_portfolio.py
 │   └── db/                      # schema.sql, repository.py, migrations
 ├── scripts/
-│   ├── run_daily.py             # orchestrator with resumable steps
-│   ├── build_knowledge_base.py
-│   └── run_evaluation.py
+│   ├── collect_daily.py         # news + prices collection, optional critical-filing alerts
+│   ├── run_weekly.py            # analysis, scoring, evaluation, email (resumable steps)
+│   └── build_knowledge_base.py
 ├── tests/
 ├── docs/DESIGN.md
 ├── requirements.txt
@@ -492,7 +510,7 @@ llm:
     analysis: { provider: litellm, model: "<mid-model>" }
     thesis:   { provider: litellm, model: "<mid-model>" }
     embed:    { provider: local,   model: "all-MiniLM-L6-v2" }
-  daily_budget_usd: 1.30
+  weekly_budget_usd: 10
   monthly_budget_usd: 40
   cache: true
 
@@ -506,15 +524,18 @@ report:
   attach_chart_pdf: true
 
 schedule:
-  daily_run: "18:00 America/New_York"
-  evaluation: "weekly:monday"
+  collect: "daily 18:00 America/New_York"
+  weekly_report: "saturday 08:00 America/Chicago"
+
+alerts:
+  critical_filings: false   # optional rule-based 8-K alerts between weekly reports
 ```
 
 ---
 
 ## 15. Scheduling and operations
 
-- **Local (v1):** macOS `launchd` job runs `scripts/run_daily.py` in the dedicated conda environment. Caveat: the Mac must be awake; `pmset` can schedule a wake before the run.
+- **Local (v1):** two macOS `launchd` jobs in the dedicated conda environment: `scripts/collect_daily.py` every evening and `scripts/run_weekly.py` on Saturday morning. Caveat: the Mac must be awake; `pmset` can schedule a wake before each run. A missed daily collection is caught up on the next run for sources that support date ranges (Finnhub, SEC EDGAR, GDELT); RSS items older than the feed's window may be lost.
 - **Later:** a small cloud VM or GitHub Actions scheduled workflow (SQLite file persisted to storage, or migrate to managed Postgres).
 - **Logging:** structured logs per step; failures and budget-cap events are reported in the "Agent health" email section.
 - **Secrets:** `.env` (git-ignored) for API keys and SMTP credentials; `.env.example` documents required variables.
@@ -538,12 +559,12 @@ schedule:
 
 | Phase | Deliverables | Done when |
 |---|---|---|
-| **1. Foundation** (≈1 week) | New conda env, package structure, config loader, SQLite schema, `UniverseProvider` (S&P 500, NASDAQ, custom), `PriceSource`, technical signals in `analysis/technical.py` | `run_daily.py` loads the S&P 500, stores daily prices, and computes technical signals for every ticker |
+| **1. Foundation** (≈1 week) | New conda env, package structure, config loader, SQLite schema, `UniverseProvider` (S&P 500, NASDAQ, custom), `PriceSource`, technical signals in `analysis/technical.py` | `collect_daily.py` loads the S&P 500 and stores daily prices; technical signals computed for every ticker |
 | **2. LLM layer** (≈1 week) | `LLMProvider` + LiteLLM adapter, role router, cache, budget guard, cost logging | Same prompt runs against two different vendors by changing only config; spend is logged |
 | **3. News pipeline** (≈1–2 weeks) | Finnhub, SEC 8-K, GDELT/RSS sources; normalize, dedupe, cluster, entity linking, rule pre-filter | One day of S&P 500 news ingested and clustered with ticker links |
-| **4. Impact analysis** (≈1–2 weeks) | Materiality filter, structured impact extraction, guardrails, golden-set test | Daily impacts stored with confidence/horizon; golden set direction accuracy measured |
+| **4. Impact analysis** (≈1–2 weeks) | Materiality filter, structured impact extraction, guardrails, golden-set test | A week of impacts stored with confidence/horizon; golden set direction accuracy measured |
 | **5. Knowledge base** (≈2 weeks) | XBRL segments/regions, 10-K extraction, relations graph, sensitivity taxonomy | Second-order impacts (peers/suppliers) appear for test events |
-| **6. Scoring + email** (≈1 week) | Composite scoring, ranking, thesis writer, HTML email via SMTP, scheduler | Daily email arrives automatically with ranked ideas and sources |
+| **6. Scoring + email** (≈1 week) | Composite scoring, ranking, thesis writer, HTML email via SMTP, scheduler | Weekly email arrives automatically with ranked ideas and sources |
 | **7. Evaluation** (start ≈ week 8, ongoing) | Outcome tracking, IC/quintile metrics, paper portfolio, weekly summary | 3–6 months of forward results available to tune weights |
 
 ---
@@ -555,7 +576,7 @@ schedule:
 | LLM is confidently wrong | Structured outputs, confidence calibration tracking, source links, human review before acting |
 | News already priced in | `already_priced_in` field, focus on second-order and long-horizon effects rather than headline speed |
 | Free data source changes or breaks (yfinance, RSS) | All sources behind interfaces; health checks reported in email; easy to swap |
-| Budget overrun | Hard daily/monthly caps, caching, batching, model routing |
+| Budget overrun | Hard weekly/monthly caps, caching, batching, model routing |
 | Look-ahead bias in evaluation | Forward paper trading as primary evaluation; point-in-time data |
 | Terms-of-service issues | Use official APIs and feeds; respect rate limits and SEC fair-access policy |
 | Secrets leaked to git | `.env` git-ignored, `.env.example` only |
@@ -567,7 +588,7 @@ schedule:
 1. Which LLM vendor(s) to configure first? (Design works with any; a cheap model for filtering is the main cost lever.)
 2. Email recipient(s) and SMTP provider (Gmail app password is simplest).
 3. Should the report track a personal portfolio/watchlist separately from S&P 500-wide ideas?
-4. Preferred run time (after close only, or also pre-market)?
+4. Preferred day and time for the weekly email, and whether to enable critical-filing alerts between reports?
 5. Project name and repository for the agent.
 
 ---
