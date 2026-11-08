@@ -1,0 +1,6 @@
+Nasdaq Traded|Symbol|Security Name|Listing Exchange|Market Category|ETF|Round Lot Size|Test Issue|Financial Status|CQS Symbol|NASDAQ Symbol|NextShares
+N|AAPL|Apple Inc. - Common Stock|Q|Q|N|100|N|N|AAPL|AAPL|N
+N|SPY|SPDR S&P 500 ETF Trust|P| |Y|100|N|N|SPY|SPY|N
+N|ZZZZ|Test Issue|Q|Q|N|100|Y|N|ZZZZ|ZZZZ|N
+N|MSFT|Microsoft Corporation - Common Stock|Q|Q|N|100|N|N|MSFT|MSFT|N
+File Creation Time: 01012026
