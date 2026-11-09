@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stock Agent</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app">
+    <nav class="nav" aria-label="Screens">
+      <div class="brand">
+        <p class="brand-kicker">On this Mac</p>
+        <p class="brand-name">Stock Agent</p>
+      </div>
+      <button type="button" id="nav-week" data-screen="week">This week</button>
+      <button type="button" id="nav-ideas" data-screen="ideas">Ideas</button>
+      <button type="button" id="nav-company" data-screen="company">Company</button>
+      <button type="button" id="nav-run" data-screen="run">Run</button>
+      <button type="button" id="nav-settings" data-screen="settings">Settings</button>
+    </nav>
+    <div class="main">
+      <section id="screen-week" data-screen="week">
+        <header class="screen-head">
+          <h1>This week</h1>
+          <p id="week-ending" class="lead">Stories the agent analyzed, with the way each effect spreads.</p>
+        </header>
+        <div id="story-list"></div>
+        <div id="story-detail" hidden></div>
+      </section>
+
+      <section id="screen-ideas" data-screen="ideas" hidden>
+        <header class="screen-head">
+          <h1>Ideas</h1>
+          <p id="ideas-ending" class="lead">Long-term, mid-term, and risk lists from the latest weekly run.</p>
+        </header>
+        <div class="idea-columns">
+          <section>
+            <h2>Long-term</h2>
+            <div id="ideas-long"></div>
+          </section>
+          <section>
+            <h2>Mid-term</h2>
+            <div id="ideas-mid"></div>
+          </section>
+          <section>
+            <h2>Risk</h2>
+            <div id="ideas-risk"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="screen-company" data-screen="company" hidden>
+        <header class="screen-head">
+          <h1>Company</h1>
+          <p class="lead">Search a ticker to see its impacts, price statistics, and chart.</p>
+        </header>
+        <form id="company-form" class="search-row">
+          <label class="grow" for="company-query">Ticker or company name</label>
+          <input id="company-query" name="q" type="search" placeholder="AAPL or Apple" autocomplete="off">
+          <button type="submit">Search</button>
+        </form>
+        <div id="company-matches"></div>
+        <div id="company-detail"></div>
+      </section>
+
+      <section id="screen-run" data-screen="run" hidden>
+        <header class="screen-head">
+          <h1>Run</h1>
+          <p class="lead">Collect today's prices and news, or run the weekly analysis. One job runs at a time.</p>
+        </header>
+        <div class="run-actions">
+          <button type="button" id="collect-button">Collect today</button>
+          <div class="weekly-action">
+            <button type="button" id="weekly-button">Run weekly analysis</button>
+            <p id="weekly-note">A full weekly run takes about an hour.</p>
+          </div>
+        </div>
+        <p id="run-status" class="status" aria-live="polite">Ready for a job.</p>
+        <p class="note">Both buttons stay off while a job is running. Closing the window stops the local server and a job that is still running. Ollama keeps running.</p>
+        <pre id="run-log" class="log">Job output appears here, including each Mapping line.</pre>
+      </section>
+
+      <section id="screen-settings" data-screen="settings" hidden>
+        <header class="screen-head">
+          <h1>Settings</h1>
+          <p class="lead">These choices are saved in settings.yaml and apply to the next run.</p>
+        </header>
+        <p>qwen2.5:3b is the default analysis model. qwen2.5:latest stays on the list when it is installed, and it is too large for this 8 GB Mac.</p>
+        <p>Industry matching uses the local nomic model (ollama/nomic-embed-text). The embed role stays all-MiniLM-L6-v2, the hashed fallback.</p>
+        <form id="settings-form" class="settings-form">
+          <label for="analysis-model">Analysis model</label>
+          <select id="analysis-model" name="analysis_model"></select>
+
+          <label for="stories-per-week">Stories per week</label>
+          <input id="stories-per-week" name="max_stories_per_week" type="number" min="1" max="200" step="1">
+
+          <label class="check" for="fetch-article-text">
+            <input id="fetch-article-text" name="fetch_article_text" type="checkbox">
+            Fetch full article text
+          </label>
+
+          <label for="top-n">Top N ideas</label>
+          <input id="top-n" name="top_n" type="number" min="1" max="50" step="1">
+
+          <fieldset>
+            <legend>News sources</legend>
+            <label class="check"><input type="checkbox" name="news" value="finnhub"> Finnhub</label>
+            <label class="check"><input type="checkbox" name="news" value="sec_edgar_8k"> SEC 8-K</label>
+            <label class="check"><input type="checkbox" name="news" value="gdelt"> GDELT</label>
+            <label class="check"><input type="checkbox" name="news" value="rss"> RSS</label>
+          </fieldset>
+
+          <label for="recipient">Email recipient</label>
+          <input id="recipient" name="recipient" type="email" autocomplete="off">
+          <p id="email-status" class="status">Checking whether email is configured.</p>
+          <p class="note">The SMTP password stays in .env.</p>
+
+          <div class="form-actions">
+            <button type="submit" id="settings-save">Save settings</button>
+            <p id="settings-status" class="status" aria-live="polite"></p>
+          </div>
+        </form>
+      </section>
+      <footer class="disclaimer">This is a research aid. Review every idea before an investment decision.</footer>
+    </div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

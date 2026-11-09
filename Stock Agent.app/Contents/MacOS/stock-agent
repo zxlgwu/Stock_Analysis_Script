@@ -1,0 +1,7 @@
+#!/bin/bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+PY="/opt/homebrew/Caskroom/miniforge/base/envs/stock_agent/bin/python"
+cd "$ROOT"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PY" -m stock_agent.ui "$@"
