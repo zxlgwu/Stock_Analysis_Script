@@ -142,7 +142,7 @@ def render_text(report: EmailReport) -> str:
                 f"  {effect.ticker} {effect.direction} via {effect.relation}: {effect.reasoning}"
             )
         if not story.effects:
-            lines.append("  No concrete effect on a tracked company.")
+            lines.append("  No concrete effect on a public company.")
     lines.append("")
     lines.append("Week in review")
     lines.extend(f"- {item}" for item in report.week_in_review)
@@ -159,7 +159,7 @@ def _stories(stories: list[AnalyzedStory], other_story_count: int = 0) -> str:
         blocks.append("<p>No news was analyzed this week.</p>")
         return "\n".join(blocks)
     if not detailed:
-        blocks.append("<p>No analyzed story produced a concrete revenue effect on a tracked company.</p>")
+        blocks.append("<p>No analyzed story produced a concrete revenue effect on a public company.</p>")
     for story in detailed:
         headline = html.escape(story.title)
         if story.url:
@@ -185,13 +185,13 @@ def _stories(stories: list[AnalyzedStory], other_story_count: int = 0) -> str:
             f"<li>{html.escape(story.title)}</li>" for story in quiet
         )
         blocks.append(
-            "<h3>Reviewed, with no concrete effect on a tracked company</h3>"
+            "<h3>Reviewed, with no concrete effect on a public company</h3>"
             f"<ul>{items}</ul>"
         )
     if other_story_count:
         blocks.append(
             f"<p>{other_story_count} other stories were screened out before analysis "
-            "(no tracked company, industry, or macro force, or lower priority this week).</p>"
+            "(lower priority this week).</p>"
         )
     return "\n".join(blocks)
 

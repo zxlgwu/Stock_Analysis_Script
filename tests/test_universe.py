@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from stock_agent.core.models import Security
 from stock_agent.ingest.prices.symbols import to_yfinance_symbol
 from stock_agent.universe.custom import CustomListUniverse
 from stock_agent.universe.nasdaq import parse_nasdaq_directory
@@ -24,6 +25,21 @@ def test_nasdaq_parser_drops_etfs_and_test_issues():
     tickers = [sec.ticker for sec in securities]
     assert tickers == ["AAPL", "MSFT"]
     assert securities[0].exchange == "NASDAQ"
+
+
+def test_public_company_list_keeps_universe_industry_and_outside_names():
+    from stock_agent.universe.listings import merge_companies
+
+    listings = parse_nasdaq_directory((FIXTURES / "nasdaq_sample.txt").read_text())
+    members = [
+        Security("AAPL", "NASDAQ", "Apple Inc.", cik="0000320193", sector="Information Technology", industry="Technology Hardware"),
+        Security("BRK.B", "NYSE", "Berkshire Hathaway", industry="Multi-Sector Holdings"),
+    ]
+    merged = {security.ticker: security for security in merge_companies(listings, members)}
+    assert merged["AAPL"].industry == "Technology Hardware"
+    assert merged["AAPL"].cik == "0000320193"
+    assert merged["MSFT"].name
+    assert merged["BRK.B"].industry == "Multi-Sector Holdings"
 
 
 def test_custom_yaml_watchlist():

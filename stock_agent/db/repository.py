@@ -516,6 +516,7 @@ class Database:
             JOIN article_clusters c ON c.cluster_id = m.cluster_id
             JOIN articles a ON a.id = c.representative_article_id
             WHERE m.material = 1
+               OR m.reason = 'No public company has a concrete revenue mechanism.'
                OR m.reason = 'No tracked company has a concrete revenue mechanism.'
             ORDER BY a.published_at DESC
             """

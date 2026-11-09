@@ -76,6 +76,23 @@ def test_each_source_parses_a_recorded_payload():
     assert rss.title == "Fed holds interest rates"
 
 
+def test_sec_filings_are_kept_when_the_company_is_outside_the_universe():
+    class _Response:
+        text = _SEC
+
+        def raise_for_status(self):
+            return None
+
+    class _Session:
+        def get(self, *args, **kwargs):
+            return _Response()
+
+    articles = Edgar8K(_Session()).fetch(datetime(2026, 11, 1, tzinfo=timezone.utc), [])
+    assert len(articles) == 1
+    assert articles[0].tickers == ()
+    assert "Apple Inc." in articles[0].title
+
+
 def test_exact_duplicates_and_near_duplicates():
     now = datetime(2026, 11, 6, tzinfo=timezone.utc)
     raw = RawArticle("finnhub", "https://news.example.com/a", "Same story", "Body", now)

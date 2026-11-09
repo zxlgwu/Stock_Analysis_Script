@@ -49,6 +49,7 @@ from stock_agent.report.email_report import (
 from stock_agent.scoring.composite import build_scores, rank_lists
 from stock_agent.scoring.factors import quality_raw, risk_raw, technical_raw, value_raw
 from stock_agent.universe import load_universe
+from stock_agent.universe.listings import load_public_companies
 
 _EMPTY_TECHNICAL = TechnicalSignals(None, None, None, None, None, None, None)
 
@@ -70,7 +71,8 @@ def run_weekly(
         llm_enabled = router is not None or _llm_configured(settings)
         if router is None:
             router = Router(settings, db)
-        securities = _members(settings, db)
+        members = _members(settings, db)
+        companies = load_public_companies(settings, members)
         summary = {
             "week_ending": as_of.isoformat(),
             "articles": 0,
@@ -80,28 +82,28 @@ def run_weekly(
             "email_status": "skipped",
         }
         _step(db, as_of, "cluster", "running", now)
-        summary["clusters"] = _cluster(db, router, securities)
+        summary["clusters"] = _cluster(db, router, companies)
         summary["articles"] = summary["clusters"]
         _step(db, as_of, "cluster", "done", now)
 
         _step(db, as_of, "materiality", "running", now)
         if llm_enabled:
-            _select_stories(db, securities, settings.max_stories_per_week, text_fetcher)
+            _select_stories(db, companies, settings.max_stories_per_week, text_fetcher)
         _step(db, as_of, "materiality", "done", now)
 
         _step(db, as_of, "impact", "running", now)
-        summary["impacts"] = _analyze(db, router, securities, as_of) if llm_enabled else 0
+        summary["impacts"] = _analyze(db, router, companies, as_of) if llm_enabled else 0
         _step(db, as_of, "impact", "done", now)
 
         _step(db, as_of, "score", "running", now)
-        scores = _score(db, settings, securities, as_of)
+        scores = _score(db, settings, members, as_of)
         summary["scores"] = len(scores)
         _step(db, as_of, "score", "done", now)
 
-        lists = _lists(db, settings, securities, scores, as_of)
+        lists = _lists(db, settings, members, scores, as_of)
         _step(db, as_of, "thesis", "running", now)
         if llm_enabled:
-            theses = _theses(db, router, lists, as_of, {security.ticker: security.name for security in securities})
+            theses = _theses(db, router, lists, as_of, {security.ticker: security.name for security in companies})
         else:
             waiting = "News analysis is waiting on an LLM model in config/settings.yaml."
             theses = {
@@ -119,7 +121,7 @@ def run_weekly(
         notes = []
         if not llm_enabled:
             notes.append("LLM models are still placeholders, so news impacts and written theses were skipped.")
-        report = _report(settings, db, securities, lists, theses, as_of, render_charts, notes)
+        report = _report(settings, db, companies, lists, theses, as_of, render_charts, notes)
         html_path = settings.root / "output" / "reports" / f"{as_of.isoformat()}.html"
         html_path.parent.mkdir(parents=True, exist_ok=True)
         html_path.write_text(render_html(report, html_path=html_path))
@@ -142,6 +144,11 @@ def _members(settings: Settings, db: Database) -> list[Security]:
     return found
 
 
+def _profiles(db: Database):
+    rows = db.conn.execute("SELECT ticker FROM company_profiles").fetchall()
+    return [profile for row in rows if (profile := db.get_profile(row["ticker"]))]
+
+
 def _cluster(db: Database, router: Router, securities: list[Security]) -> int:
     _isolate_filings(db)
     articles = db.unclustered_articles()
@@ -150,14 +157,14 @@ def _cluster(db: Database, router: Router, securities: list[Security]) -> int:
     filings = [article for article in articles if article.source == "sec_edgar_8k"]
     articles = [article for article in articles if article.source != "sec_edgar_8k"]
     relations = db.all_relations()
-    profiles = [profile for security in securities if (profile := db.get_profile(security.ticker))]
+    profiles = _profiles(db)
     for article in filings:
         _store_single_cluster(db, article, securities, relations, profiles)
     if not articles:
         return len(filings)
     vectors = router.embed([f"{article.title}. {article.body[:400]}" for article in articles])
     relations = db.all_relations()
-    profiles = [profile for security in securities if (profile := db.get_profile(security.ticker))]
+    profiles = _profiles(db)
     groups = cluster_vectors([article.id for article in articles], vectors)
     by_id = {article.id: article for article in articles}
     for group in groups:
@@ -238,8 +245,8 @@ def _store_single_cluster(db, article, securities, relations, profiles) -> None:
     )
 
 
-SCREENED_OUT = "Screened out before analysis: no tracked company, industry, or macro force, or lower priority this week."
-NO_MECHANISM = "No tracked company has a concrete revenue mechanism."
+SCREENED_OUT = "Screened out before analysis: lower priority this week."
+NO_MECHANISM = "No public company has a concrete revenue mechanism."
 SELECTED = "Selected for news analysis."
 MAX_CANDIDATES = 14
 
@@ -442,7 +449,7 @@ def _analyze(db: Database, router: Router, securities: list[Security], as_of: da
 
 def _refresh_links(db: Database, securities: list[Security]) -> None:
     relations = db.all_relations()
-    profiles = [profile for security in securities if (profile := db.get_profile(security.ticker))]
+    profiles = _profiles(db)
     rows = db.conn.execute("SELECT cluster_id FROM article_clusters WHERE dropped = 0").fetchall()
     for row in rows:
         articles = _cluster_articles(db, row["cluster_id"])

@@ -54,12 +54,9 @@ class Edgar8K:
             if sec.cik
         }
         articles = self.parse(response.text, cik_to_ticker)
-        # A small company's 8-K cover page does not move a tracked company.
-        return [
-            article
-            for article in articles
-            if article.published_at >= since and article.tickers
-        ]
+        # Keep filings from any public company. A known CIK adds a ticker;
+        # an unknown filer is still stored so the company name can be linked later.
+        return [article for article in articles if article.published_at >= since]
 
     @staticmethod
     def parse(xml_text: str, cik_to_ticker: dict[str, str] | None = None) -> list[RawArticle]:
