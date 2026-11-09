@@ -34,6 +34,17 @@ class Settings:
     llm_roles: dict[str, RoleConfig]
     weekly_budget_usd: float
     monthly_budget_usd: float
+    llm_cache: bool
+    news_sources: list[str]
+    fundamentals_source: str
+    rss_feeds: list[str]
+    decay_days: dict[str, int]
+    score_weights: dict[str, float]
+    top_n: int
+    recipients: list[str]
+    critical_filings: bool
+    max_stories_per_week: int = 40
+    fetch_article_text: bool = True
 
     @classmethod
     def load(cls, path: Path | None = None) -> Settings:
@@ -42,8 +53,13 @@ class Settings:
         raw = yaml.safe_load(config_path.read_text()) or {}
 
         prices = raw.get("prices") or {}
-        charts = (raw.get("report") or {}).get("charts") or {}
+        report = raw.get("report") or {}
+        charts = report.get("charts") or {}
         llm = raw.get("llm") or {}
+        sources = raw.get("sources") or {}
+        scoring = raw.get("scoring") or {}
+        alerts = raw.get("alerts") or {}
+        analysis = raw.get("analysis") or {}
         roles = {
             name: RoleConfig(provider=str(cfg["provider"]), model=str(cfg["model"]))
             for name, cfg in (llm.get("roles") or {}).items()
@@ -70,4 +86,31 @@ class Settings:
             llm_roles=roles,
             weekly_budget_usd=float(llm.get("weekly_budget_usd", 10)),
             monthly_budget_usd=float(llm.get("monthly_budget_usd", 40)),
+            llm_cache=bool(llm.get("cache", True)),
+            news_sources=[str(name) for name in sources.get("news") or []],
+            fundamentals_source=str(sources.get("fundamentals") or "sec_xbrl"),
+            rss_feeds=[str(url) for url in sources.get("rss_feeds") or []],
+            decay_days={
+                "mid": int((scoring.get("decay_days") or {}).get("mid", 90)),
+                "long": int((scoring.get("decay_days") or {}).get("long", 365)),
+            },
+            score_weights={
+                key: float(value)
+                for key, value in (
+                    scoring.get("weights")
+                    or {
+                        "news_mid": 0.25,
+                        "news_long": 0.25,
+                        "quality": 0.20,
+                        "value": 0.15,
+                        "technical": 0.10,
+                        "risk": 0.05,
+                    }
+                ).items()
+            },
+            top_n=int(report.get("top_n", 10)),
+            recipients=[str(item) for item in report.get("recipients") or []],
+            critical_filings=bool(alerts.get("critical_filings", False)),
+            max_stories_per_week=int(analysis.get("max_stories_per_week", 40)),
+            fetch_article_text=bool(analysis.get("fetch_article_text", True)),
         )

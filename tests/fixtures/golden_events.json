@@ -1,0 +1,10 @@
+[
+  {"id": "g1", "headline": "Apple raises services guidance for the next two years", "expected_ticker": "AAPL", "expected_direction": "positive"},
+  {"id": "g2", "headline": "Microsoft wins a multi-year cloud contract", "expected_ticker": "MSFT", "expected_direction": "positive"},
+  {"id": "g3", "headline": "A court blocks Nvidia from shipping its top chip to China", "expected_ticker": "NVDA", "expected_direction": "negative"},
+  {"id": "g4", "headline": "Exxon raises its long-term production outlook", "expected_ticker": "XOM", "expected_direction": "positive"},
+  {"id": "g5", "headline": "Johnson and Johnson loses a patent case on a major drug", "expected_ticker": "JNJ", "expected_direction": "negative"},
+  {"id": "g6", "headline": "JPMorgan reports a lasting increase in net interest income", "expected_ticker": "JPM", "expected_direction": "positive"},
+  {"id": "g7", "headline": "A new tariff raises costs for Apple hardware", "expected_ticker": "AAPL", "expected_direction": "negative"},
+  {"id": "g8", "headline": "UnitedHealth loses a large Medicare contract", "expected_ticker": "UNH", "expected_direction": "negative"}
+]

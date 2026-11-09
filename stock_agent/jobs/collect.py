@@ -23,9 +23,10 @@ def run_collection(
     limit: int | None = None,
     tickers: list[str] | None = None,
     compute_stats: bool = True,
+    collect_news: bool = True,
 ) -> dict[str, int]:
     as_of = as_of or date.today()
-    summary = {"members": 0, "priced": 0, "rows": 0, "stats": 0}
+    summary = {"members": 0, "priced": 0, "rows": 0, "stats": 0, "articles": 0}
     with Database(settings.database_path) as db:
         members = _refresh_universes(db, settings, as_of)
         summary["members"] = len(members)
@@ -39,6 +40,8 @@ def run_collection(
         summary["priced"] = len(selected)
         if compute_stats:
             summary["stats"] = _update_stats(db, settings, selected, as_of)
+        if collect_news:
+            summary["articles"] = _collect_news(db, settings, members)
     return summary
 
 
@@ -144,6 +147,21 @@ def _dedupe(securities: list[Security]) -> list[Security]:
         seen.add(sec.ticker)
         unique.append(sec)
     return unique
+
+
+def _collect_news(db: Database, settings: Settings, members: list[Security]) -> int:
+    from stock_agent.ingest.news import default_sources
+    from stock_agent.jobs.news import collect_articles
+
+    try:
+        result = collect_articles(settings, db, members, default_sources(settings))
+    except Exception as exc:
+        print(f"News collection failed: {exc}")
+        return 0
+    for failure in result["failures"]:
+        print(f"News source failed: {failure}")
+    print(f"Stored {result['stored']} new articles. Critical alerts {result['alerts']}.")
+    return result["stored"]
 
 
 def _pct(value: float | None) -> str:

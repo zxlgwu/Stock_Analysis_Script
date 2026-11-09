@@ -22,6 +22,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None, help="Download prices for the first N members only")
     parser.add_argument("--tickers", default=None, help="Comma-separated tickers to price instead")
     parser.add_argument("--skip-stats", action="store_true", help="Store prices without computing statistics")
+    parser.add_argument("--skip-news", action="store_true", help="Skip news and filing collection")
     args = parser.parse_args()
     tickers = [part.strip() for part in args.tickers.split(",")] if args.tickers else None
     summary = run_collection(
@@ -29,10 +30,11 @@ def main() -> None:
         limit=args.limit,
         tickers=tickers,
         compute_stats=not args.skip_stats,
+        collect_news=not args.skip_news,
     )
     print(
         f"Done. Members {summary['members']}, priced {summary['priced']}, "
-        f"rows {summary['rows']}, stats {summary['stats']}."
+        f"rows {summary['rows']}, stats {summary['stats']}, articles {summary['articles']}."
     )
 
 

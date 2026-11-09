@@ -13,13 +13,18 @@ database:
 
 llm:
   roles:
-    filter:   { provider: litellm, model: "<cheap-model>" }
-    analysis: { provider: litellm, model: "<mid-model>" }
-    thesis:   { provider: litellm, model: "<mid-model>" }
+    filter:   { provider: litellm, model: "ollama/qwen2.5:3b" }
+    analysis: { provider: litellm, model: "ollama/qwen2.5:3b" }
+    thesis:   { provider: litellm, model: "ollama/qwen2.5:3b" }
     embed:    { provider: local,   model: "all-MiniLM-L6-v2" }
   weekly_budget_usd: 10
   monthly_budget_usd: 40
   cache: true
+
+analysis:
+  # Each story gets two model calls: how the effect spreads, then per-company impact.
+  max_stories_per_week: 40
+  fetch_article_text: true
 
 scoring:
   decay_days: { mid: 90, long: 365 }
@@ -32,7 +37,7 @@ prices:
 
 report:
   top_n: 10
-  recipients: ["you@example.com"]
+  recipients: ["zxlnwpu@gmail.com"]
   charts:
     years: 5
     moving_averages: [20, 60, 120]
