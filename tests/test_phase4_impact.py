@@ -7,7 +7,7 @@ from stock_agent.analysis.plausibility import supported_impacts
 from stock_agent.analysis.guardrails import apply_guardrails
 from stock_agent.analysis.materiality import classify_materiality, prompt_version
 from stock_agent.analysis.schemas import EventAnalysis, Impact, MaterialityBatch
-from stock_agent.core.config import Settings
+from stock_agent.core.config import RoleConfig, Settings
 from stock_agent.db.repository import Database
 from stock_agent.llm.base import LLMResult, Message
 from stock_agent.llm.prompts import FILTER_PROMPT_VERSION
@@ -261,7 +261,12 @@ def test_implausible_reasoning_is_dropped():
 
 
 def test_materiality_coerces_unknown_categories_and_records_prompt_version(tmp_path):
-    settings = replace(Settings.load(), root=tmp_path, database_path=tmp_path / "test.db")
+    loaded = Settings.load()
+    roles = {
+        name: RoleConfig("litellm" if role.provider == "cursor" else role.provider, role.model)
+        for name, role in loaded.llm_roles.items()
+    }
+    settings = replace(loaded, root=tmp_path, database_path=tmp_path / "test.db", llm_roles=roles)
     db = Database(settings.database_path)
 
     class _Model:

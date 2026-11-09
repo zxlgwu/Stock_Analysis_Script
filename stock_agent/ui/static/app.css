@@ -176,13 +176,49 @@ fieldset {
 
 .weekly-action p { margin: 0.35rem 0 0; color: var(--muted); }
 
+#screen-run:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 4.5rem);
+}
+
+.process-window {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 360px;
+  margin-top: 0.8rem;
+  border: 1px solid #24312e;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #17211f;
+}
+
+.process-head {
+  padding: 0.75rem 1rem 0.7rem;
+  background: #24312e;
+  color: #e7f2ef;
+}
+
+.process-head h2 {
+  margin: 0;
+  color: #e7f2ef;
+  font-size: 0.95rem;
+}
+
+.process-head p {
+  margin: 0.25rem 0 0;
+  color: #c9ddd8;
+}
+
 .log {
+  flex: 1;
+  margin: 0;
   background: #17211f;
   color: #e7f2ef;
-  border-radius: 12px;
-  padding: 0.9rem 1rem;
-  min-height: 220px;
-  max-height: 420px;
+  border-radius: 0;
+  padding: 0.9rem 1rem 1.1rem;
+  min-height: 280px;
   overflow: auto;
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

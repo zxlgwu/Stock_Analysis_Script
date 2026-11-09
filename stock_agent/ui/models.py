@@ -6,6 +6,7 @@ import re
 import subprocess
 
 from stock_agent.analysis.propagation import INDUSTRY_EMBED_MODEL
+from stock_agent.llm.cursor_provider import list_cursor_models
 
 DEFAULT_ANALYSIS_MODEL = "ollama/qwen2.5:3b"
 TOO_LARGE_TAGS = {"qwen2.5:latest", "qwen2.5vl:latest"}
@@ -36,6 +37,7 @@ def describe_model(name: str, *, size_gb: float | None = None, size_label: str =
             "kind": "embed",
             "size": size_label,
             "note": "Installed for industry matching.",
+            "group": "On this Mac",
         }
     too_large = tag in TOO_LARGE_TAGS or (size_gb is not None and size_gb >= 4.0)
     if too_large:
@@ -46,6 +48,7 @@ def describe_model(name: str, *, size_gb: float | None = None, size_label: str =
             "kind": "too_large",
             "size": size_label,
             "note": "Too large for this 8 GB Mac.",
+            "group": "On this Mac",
         }
     if "vl" in tag.split(":", 1)[0]:
         return {
@@ -55,6 +58,7 @@ def describe_model(name: str, *, size_gb: float | None = None, size_label: str =
             "kind": "vision",
             "size": size_label,
             "note": "Vision model. Analysis uses a text model.",
+            "group": "On this Mac",
         }
     note = "Default analysis model." if tag == "qwen2.5:3b" else ""
     return {
@@ -64,6 +68,7 @@ def describe_model(name: str, *, size_gb: float | None = None, size_label: str =
         "kind": "analysis",
         "size": size_label,
         "note": note,
+        "group": "On this Mac",
     }
 
 
@@ -84,8 +89,22 @@ def installed_models() -> list[dict]:
     return parse_ollama_list(completed.stdout)
 
 
+def available_models() -> list[dict]:
+    """Local Ollama models plus the Cursor models this account can run."""
+    return installed_models() + list_cursor_models()
+
+
 def model_choice_error(model: str, installed: list[dict], current: str) -> str | None:
     """Return a user-facing reason the analysis model cannot be saved."""
+    if str(model).startswith("cursor/"):
+        for item in installed:
+            if item.get("model") == model:
+                if item.get("selectable"):
+                    return None
+                return item.get("note") or "That Cursor model is not available on this account."
+        if model == current:
+            return None
+        return "Choose a Cursor model from the list for this account."
     normalized = model if str(model).startswith("ollama/") else f"ollama/{model}"
     tag = normalized.removeprefix("ollama/")
     if tag.startswith("nomic-embed"):

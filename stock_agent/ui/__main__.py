@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from stock_agent.core.config import PROJECT_ROOT, Settings
 from stock_agent.ui.jobs import JobManager
-from stock_agent.ui.models import installed_models
+from stock_agent.ui.models import available_models
 from stock_agent.ui.server import AppState, StockServer, create_server
 
 
@@ -62,7 +62,7 @@ def _state() -> AppState:
         settings_path=settings.root / "config" / "settings.yaml",
         charts_dir=settings.root / "output" / "charts",
         jobs=JobManager(),
-        list_models=installed_models,
+        list_models=available_models,
     )
 
 

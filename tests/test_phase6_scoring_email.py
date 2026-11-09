@@ -306,10 +306,16 @@ def _seed(db):
 
 
 def test_weekly_dry_run_is_idempotent(tmp_path):
+    loaded = Settings.load()
+    roles = {
+        name: RoleConfig("litellm" if role.provider == "cursor" else role.provider, role.model)
+        for name, role in loaded.llm_roles.items()
+    }
     settings = replace(
-        Settings.load(),
+        loaded,
         root=tmp_path,
         database_path=tmp_path / "test.db",
+        llm_roles=roles,
         recipients=["investor@example.com"],
         top_n=5,
     )
@@ -368,7 +374,7 @@ def test_weekly_dry_run_is_idempotent(tmp_path):
 def test_weekly_skips_thesis_when_budget_is_spent(tmp_path):
     loaded = Settings.load()
     roles = {
-        name: RoleConfig(role.provider, "test-model")
+        name: RoleConfig("litellm" if role.provider == "cursor" else role.provider, "test-model")
         for name, role in loaded.llm_roles.items()
     }
     settings = replace(

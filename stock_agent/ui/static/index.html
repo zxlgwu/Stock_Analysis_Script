@@ -78,7 +78,13 @@
         </div>
         <p id="run-status" class="status" aria-live="polite">Ready for a job.</p>
         <p class="note">Both buttons stay off while a job is running. Closing the window stops the local server and a job that is still running. Ollama keeps running.</p>
-        <pre id="run-log" class="log">Job output appears here, including each Mapping line.</pre>
+        <section class="process-window" aria-label="Run process">
+          <header class="process-head">
+            <h2>Process</h2>
+            <p id="run-now">Waiting to start.</p>
+          </header>
+          <pre id="run-log" class="log">The whole run appears here, from company matching through each story, the scores, and the report.</pre>
+        </section>
       </section>
 
       <section id="screen-settings" data-screen="settings" hidden>
@@ -86,8 +92,8 @@
           <h1>Settings</h1>
           <p class="lead">These choices are saved in settings.yaml and apply to the next run.</p>
         </header>
-        <p>qwen2.5:3b is the default analysis model. qwen2.5:latest stays on the list when it is installed, and it is too large for this 8 GB Mac.</p>
-        <p>Industry matching uses the local nomic model (ollama/nomic-embed-text). The embed role stays all-MiniLM-L6-v2, the hashed fallback.</p>
+        <p id="model-help">qwen2.5:3b runs on this Mac. Cursor models use your Cursor membership and appear after CURSOR_API_KEY is in .env. A Cursor model is an agent run for each story, so a week takes longer than the local 3B model.</p>
+        <p>Industry matching stays on the local nomic model (ollama/nomic-embed-text). The embed role stays all-MiniLM-L6-v2.</p>
         <form id="settings-form" class="settings-form">
           <label for="analysis-model">Analysis model</label>
           <select id="analysis-model" name="analysis_model"></select>

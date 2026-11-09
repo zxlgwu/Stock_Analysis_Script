@@ -44,8 +44,14 @@ def read_settings(path: Path) -> dict:
     sources = raw.get("sources") or {}
     report = raw.get("report") or {}
     analysis_block = raw.get("analysis") or {}
+    provider = str(analysis.get("provider") or "litellm")
+    raw_model = str(analysis.get("model") or DEFAULT_ANALYSIS_MODEL)
+    if provider == "cursor" and not raw_model.startswith("cursor/"):
+        shown_model = f"cursor/{raw_model}"
+    else:
+        shown_model = raw_model
     return {
-        "analysis_model": str(analysis.get("model") or DEFAULT_ANALYSIS_MODEL),
+        "analysis_model": shown_model,
         "max_stories_per_week": int(analysis_block.get("max_stories_per_week", 40)),
         "fetch_article_text": bool(analysis_block.get("fetch_article_text", True)),
         "top_n": int(report.get("top_n", 10)),
@@ -78,6 +84,7 @@ def public_settings(path: Path, installed: list[dict], *, env: Mapping[str, str]
                 "The embed role stays all-MiniLM-L6-v2, the hashed fallback."
             ),
         },
+        "cursor_configured": bool((os.environ if env is None else env).get("CURSOR_API_KEY", "").strip()),
     }
 
 
@@ -96,8 +103,7 @@ def save_settings(
     reason = model_choice_error(model, installed, current["analysis_model"])
     if reason:
         raise SettingsError(reason)
-    if not model.startswith("ollama/"):
-        model = f"ollama/{model}"
+    provider, model = _stored_model(model)
     stories = _bounded_int(
         updates.get("max_stories_per_week", current["max_stories_per_week"]),
         "Stories per week",
@@ -110,6 +116,7 @@ def save_settings(
     recipients = _recipients(updates.get("recipients", current["recipients"]))
     updated = update_settings_text(
         text,
+        analysis_provider=provider,
         analysis_model=model,
         max_stories_per_week=stories,
         fetch_article_text=fetch_text,
@@ -126,6 +133,7 @@ def save_settings(
 def update_settings_text(
     text: str,
     *,
+    analysis_provider: str,
     analysis_model: str,
     max_stories_per_week: int,
     fetch_article_text: bool,
@@ -135,7 +143,7 @@ def update_settings_text(
 ) -> str:
     embed_before = _embed_line(text)
     for role in _ANALYSIS_ROLES:
-        text = _replace_role_model(text, role, analysis_model)
+        text = _replace_role_model(text, role, analysis_model, provider=analysis_provider)
     text = _replace_scalar(text, "max_stories_per_week", str(max_stories_per_week))
     text = _replace_scalar(text, "fetch_article_text", "true" if fetch_article_text else "false")
     text = _replace_scalar(text, "top_n", str(top_n))
@@ -150,19 +158,43 @@ def update_settings_text(
 def _with_current(installed: list[dict], current: str) -> list[dict]:
     items = list(installed)
     known = {item["model"] for item in items} | {item["name"] for item in items}
+    if current in known:
+        return items
+    if current.startswith("cursor/"):
+        items.insert(
+            0,
+            {
+                "name": current.removeprefix("cursor/"),
+                "model": current,
+                "selectable": True,
+                "kind": "cursor",
+                "group": "Cursor",
+                "size": "",
+                "note": "Saved Cursor model.",
+            },
+        )
+        return items
     tag = current.removeprefix("ollama/")
-    if current not in known and tag not in known:
+    if tag not in known:
         items.insert(0, describe_model(tag))
     return items
 
 
-def _replace_role_model(text: str, role: str, model: str) -> str:
-    pattern = rf'^(\s*{role}:\s*\{{[^\n]*\bmodel:\s*")[^"]*(")'
+def _stored_model(model: str) -> tuple[str, str]:
+    if model.startswith("cursor/"):
+        model_id = model.removeprefix("cursor/").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._:-]+", model_id):
+            raise SettingsError("Choose a Cursor model from the list for this account.")
+        return "cursor", model_id
+    if not model.startswith("ollama/"):
+        model = f"ollama/{model}"
+    return "litellm", model
 
-    def repl(match: re.Match[str]) -> str:
-        return f"{match.group(1)}{model}{match.group(2)}"
 
-    updated, count = re.subn(pattern, repl, text, count=1, flags=re.MULTILINE)
+def _replace_role_model(text: str, role: str, model: str, *, provider: str) -> str:
+    pattern = rf"^(\s*{role}:\s*)\{{[^}}]*\}}"
+    replacement = rf'\1{{ provider: {provider}, model: "{model}" }}'
+    updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
     if count != 1:
         raise SettingsError(f"Could not update the {role} model in settings.yaml.")
     return updated

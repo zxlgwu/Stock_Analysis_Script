@@ -197,6 +197,8 @@ def test_read_api_serves_stories_ideas_company_and_chart(tmp_path: Path):
         for label in ("This week", "Ideas", "Company", "Run", "Settings"):
             assert label in text
         assert WEEKLY_NOTE in text
+        assert 'class="process-window"' in text
+        assert 'id="run-now"' in text
         assert "ollama/nomic-embed-text" in text
         assert "all-MiniLM-L6-v2" in text
         assert "The SMTP password stays in .env." in text
@@ -339,6 +341,66 @@ def test_job_stream_shows_mapping_lines_and_refuses_a_second_job(tmp_path: Path)
     finally:
         release.set()
         app.close()
+
+
+def test_cursor_model_can_be_saved_and_answers_without_editing(tmp_path: Path):
+    from types import SimpleNamespace
+
+    from stock_agent.llm.base import Message
+    from stock_agent.llm.cursor_provider import CursorAuthError, CursorProvider, cursor_model_choices
+    from stock_agent.ui.models import parse_ollama_list
+    from stock_agent.ui.settings_io import save_settings
+
+    choices = cursor_model_choices(
+        [
+            SimpleNamespace(id="composer-2.5", display_name="Composer 2.5", description="Default Cursor model."),
+            SimpleNamespace(id="auto", display_name="Auto", description="Cursor picks the model."),
+        ]
+    )
+    assert [item["model"] for item in choices] == ["cursor/composer-2.5", "cursor/auto"]
+    assert all(item["selectable"] and item["group"] == "Cursor" for item in choices)
+
+    path = tmp_path / "settings.yaml"
+    path.write_text(Path("config/settings.yaml").read_text())
+    saved = save_settings(
+        path,
+        {"analysis_model": "cursor/composer-2.5"},
+        parse_ollama_list(_OLLAMA) + choices,
+    )
+    assert saved["analysis_model"] == "cursor/composer-2.5"
+    text = path.read_text()
+    assert "provider: cursor, model: \"composer-2.5\"" in text
+    assert "embed:" in text and "all-MiniLM-L6-v2" in text
+
+    seen = {}
+
+    def prompt(body: str, model: str, api_key: str):
+        seen["body"] = body
+        seen["model"] = model
+        seen["key"] = api_key
+        return SimpleNamespace(
+            status="finished",
+            result='{"relevant": true}',
+            usage=SimpleNamespace(input_tokens=3, output_tokens=4),
+        )
+
+    result = CursorProvider(prompt=prompt, api_key="cursor_test").complete(
+        [Message("system", "Return JSON."), Message("user", "Headline: Jetty")],
+        model="composer-2.5",
+    )
+    assert result.text == '{"relevant": true}'
+    assert result.provider == "cursor"
+    assert seen["model"] == "composer-2.5"
+    assert seen["key"] == "cursor_test"
+    assert "Do not edit files" in seen["body"]
+    assert "Headline: Jetty" in seen["body"]
+
+    try:
+        CursorProvider(prompt=prompt, api_key="").complete([Message("user", "Hi")], model="auto")
+    except CursorAuthError as exc:
+        assert exc.is_retryable is False
+    else:
+        raise AssertionError("A missing Cursor key should stop the call.")
 
 
 def _read_until(app: _App, found: bytearray) -> None:

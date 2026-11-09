@@ -73,6 +73,7 @@ def run_weekly(
             router = Router(settings, db)
         members = _members(settings, db)
         companies = load_public_companies(settings, members)
+        print(f"Week ending {as_of.isoformat()}.")
         summary = {
             "week_ending": as_of.isoformat(),
             "articles": 0,
@@ -121,6 +122,7 @@ def run_weekly(
         notes = []
         if not llm_enabled:
             notes.append("LLM models are still placeholders, so news impacts and written theses were skipped.")
+        print(f"Writing the report for the week ending {as_of.isoformat()}.")
         report = _report(settings, db, companies, lists, theses, as_of, render_charts, notes)
         html_path = settings.root / "output" / "reports" / f"{as_of.isoformat()}.html"
         html_path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,7 +155,9 @@ def _cluster(db: Database, router: Router, securities: list[Security]) -> int:
     _isolate_filings(db)
     articles = db.unclustered_articles()
     if not articles:
+        print("Clustering: no new articles.")
         return 0
+    print(f"Clustering {len(articles)} articles.")
     filings = [article for article in articles if article.source == "sec_edgar_8k"]
     articles = [article for article in articles if article.source != "sec_edgar_8k"]
     relations = db.all_relations()
@@ -161,6 +165,7 @@ def _cluster(db: Database, router: Router, securities: list[Security]) -> int:
     for article in filings:
         _store_single_cluster(db, article, securities, relations, profiles)
     if not articles:
+        print(f"Clustered {len(filings)} filing stories.")
         return len(filings)
     vectors = router.embed([f"{article.title}. {article.body[:400]}" for article in articles])
     relations = db.all_relations()
@@ -185,7 +190,9 @@ def _cluster(db: Database, router: Router, securities: list[Security]) -> int:
             continue
         text = "\n".join(f"{member.title}. {member.body}" for member in members)
         db.replace_entities(cluster_id, link_entities(text, securities, relations, profiles))
-    return len(groups) + len(filings)
+    count = len(groups) + len(filings)
+    print(f"Clustered {count} stories.")
+    return count
 
 
 def _isolate_filings(db: Database) -> None:
@@ -263,7 +270,7 @@ def _select_stories(
     selected when there is room, and the model decides whether it reaches a company.
     """
     _isolate_filings(db)
-    _refresh_links(db, securities)
+    _refresh_links(db, securities, "Linking stories before choosing which ones to analyze.")
     ranked = []
     for row in db.pending_clusters():
         articles = db.articles_by_ids([row["representative_article_id"]])
@@ -277,19 +284,27 @@ def _select_stories(
         score = story_priority(article.title, article.body, article.source, links, size)
         ranked.append((score, article.published_at, row["cluster_id"], article))
     ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    print(f"Ranking {len(ranked)} stories. Up to {limit} will be analyzed.")
+    selected = 0
+    screened = 0
     for position, (score, _published, cluster_id, article) in enumerate(ranked):
         if position < limit and score > -2:
             if text_fetcher is not None and article.source != "sec_edgar_8k" and len(article.body) < 400:
+                print(f"  reading article: {article.title[:90]}")
                 text = text_fetcher(article.url)
                 if len(text) > len(article.body):
                     db.update_article_body(article.id, text)
             db.save_materiality(cluster_id, True, "other", SELECTED, "", filter_version())
+            print(f"Selected: {article.title[:90]}")
+            selected += 1
         else:
             db.save_materiality(cluster_id, False, "other", SCREENED_OUT, "", filter_version())
+            screened += 1
+    print(f"Selected {selected} stories for analysis. Screened out {screened}.")
 
 
 def _analyze(db: Database, router: Router, securities: list[Security], as_of: date) -> int:
-    _refresh_links(db, securities)
+    _refresh_links(db, securities, "Linking the selected stories before the model reads them.")
     universe = {security.ticker for security in securities}
     by_ticker = {security.ticker: security for security in securities}
     names = {security.ticker: security.name for security in securities}
@@ -299,7 +314,10 @@ def _analyze(db: Database, router: Router, securities: list[Security], as_of: da
     embed_fn = industry_embedder(router)
     industry_cache: dict = {}
     written = 0
-    for cluster_id in db.material_clusters_without_impacts():
+    cluster_ids = db.material_clusters_without_impacts()
+    total = len(cluster_ids)
+    print(f"Analyzing {total} stories with {model}.")
+    for index, cluster_id in enumerate(cluster_ids, start=1):
         articles = _cluster_articles(db, cluster_id)
         if not articles:
             continue
@@ -320,7 +338,7 @@ def _analyze(db: Database, router: Router, securities: list[Security], as_of: da
             named_industries=named_industries,
             cache=industry_cache,
         )
-        print(f"Mapping {title[:90]}")
+        print(f"Mapping {index} of {total}: {title[:90]}")
         try:
             spread = map_propagation(
                 router,
@@ -334,7 +352,9 @@ def _analyze(db: Database, router: Router, securities: list[Security], as_of: da
             print(f"  propagation skipped: {exc}"[:200])
             spread = ImpactMap(relevant=True, event_summary="", channels=[])
         if spread is None:
+            print("  stopped: the model budget was reached.")
             break
+        print(f"  spread: {len(spread.channels)} channels.")
         resolved = resolve_channels(spread.channels, securities, liquidity) if spread.relevant else []
         extra = resolve_channels(fallback_channels(shortlist[:2], title), securities, liquidity)
         seen = {item.channel.target.lower() for item in resolved}
@@ -381,6 +401,7 @@ def _analyze(db: Database, router: Router, securities: list[Security], as_of: da
                 candidates[ticker] = {"order": 3, "relation": "macro_exposure", "why_included": link}
         ordered = sorted(candidates.items(), key=lambda pair: pair[1]["order"])[:MAX_CANDIDATES]
         if not ordered:
+            print("  no company to score for this story.")
             db.save_materiality(cluster_id, False, "other", NO_MECHANISM, model, propagation_version())
             continue
         context = {ticker for ticker, _ in ordered}
@@ -422,8 +443,10 @@ def _analyze(db: Database, router: Router, securities: list[Security], as_of: da
         directional = [impact for impact in analysis.impacts if impact.direction != "neutral"]
         kept = supported_impacts(directional, f"{title}. {text}", names)
         if not kept:
+            print("  no concrete revenue mechanism.")
             db.save_materiality(cluster_id, False, "other", NO_MECHANISM, model, impact_version())
             continue
+        print(f"  kept {len(kept)} impacts.")
         rows = [
             (
                 cluster_id,
@@ -447,17 +470,26 @@ def _analyze(db: Database, router: Router, securities: list[Security], as_of: da
     return written
 
 
-def _refresh_links(db: Database, securities: list[Security]) -> None:
+def _refresh_links(db: Database, securities: list[Security], reason: str) -> None:
     relations = db.all_relations()
     profiles = _profiles(db)
     rows = db.conn.execute("SELECT cluster_id FROM article_clusters WHERE dropped = 0").fetchall()
-    for row in rows:
+    total = len(rows)
+    print(reason)
+    if total == 0:
+        print("  no stories to match.")
+        return
+    print(f"  {total} stories to match.")
+    for index, row in enumerate(rows, start=1):
         articles = _cluster_articles(db, row["cluster_id"])
         text = "\n".join(f"{article.title}. {article.body}" for article in articles)
         db.replace_entities(row["cluster_id"], link_entities(text, securities, relations, profiles))
+        if index == 1 or index % 25 == 0 or index == total:
+            print(f"  linked {index} of {total} stories.")
 
 
 def _score(db: Database, settings: Settings, securities: list[Security], as_of: date) -> list[ScoreRecord]:
+    print(f"Scoring {len(securities)} S&P companies.")
     if not securities:
         return []
     sectors = {security.ticker: security.sector or "Unknown" for security in securities}
@@ -496,6 +528,7 @@ def _score(db: Database, settings: Settings, securities: list[Security], as_of: 
         as_of,
     )
     db.upsert_scores(scores)
+    print(f"Scored {len(scores)} companies.")
     return scores
 
 
@@ -515,6 +548,7 @@ def _lists(db, settings, securities, scores, as_of):
 
 def _theses(db, router, lists, as_of, names: dict[str, str]) -> dict[str, tuple[str, str]]:
     if db.recommendations_for(as_of):
+        print("Theses for this week are already written.")
         return {
             row["ticker"]: (row["thesis"] or "", row["risks"] or "")
             for row in db.recommendations_for(as_of)
@@ -528,6 +562,7 @@ def _theses(db, router, lists, as_of, names: dict[str, str]) -> dict[str, tuple[
                 continue
             seen.add(row.ticker)
             company = names.get(row.ticker, row.ticker)
+            print(f"Thesis: {row.ticker} {company}")
             effects = [
                 impact
                 for impact in impacts
@@ -605,6 +640,7 @@ def _report(settings, db, securities, lists, theses, as_of, render_charts, notes
     chart_files: dict[str, Path] = {}
     pdf_path = None
     if render_charts and unique:
+        print(f"Drawing price charts for {len(unique)} companies.")
         chart_files, pdf_path = _charts(settings, db, unique, names, as_of)
     prior = _prior_tickers(db, as_of)
     current_ids = {row.ticker for row in lists["long"] + lists["mid"]}

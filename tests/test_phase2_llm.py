@@ -16,7 +16,12 @@ from stock_agent.processing.dedupe import cosine
 
 
 def _settings(tmp_path, **changes):
-    return replace(Settings.load(), root=tmp_path, database_path=tmp_path / "test.db", **changes)
+    loaded = Settings.load()
+    roles = {
+        name: RoleConfig("litellm" if role.provider == "cursor" else role.provider, role.model)
+        for name, role in loaded.llm_roles.items()
+    }
+    return replace(loaded, root=tmp_path, database_path=tmp_path / "test.db", llm_roles=roles, **changes)
 
 
 class _Vendor:
@@ -34,7 +39,8 @@ class _Vendor:
 
 def test_settings_keep_role_routing_and_budgets():
     settings = Settings.load()
-    assert settings.llm_roles["filter"].provider == "litellm"
+    assert settings.llm_roles["filter"].provider in {"litellm", "cursor"}
+    assert settings.llm_roles["analysis"].provider == settings.llm_roles["filter"].provider
     assert settings.llm_roles["embed"].provider == "local"
     assert settings.weekly_budget_usd == 10
     assert settings.monthly_budget_usd == 40

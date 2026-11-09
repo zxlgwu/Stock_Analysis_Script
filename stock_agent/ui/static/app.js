@@ -13,6 +13,7 @@
   const companyDetail = document.getElementById("company-detail");
   const companyQuery = document.getElementById("company-query");
   const runLog = document.getElementById("run-log");
+  const runNow = document.getElementById("run-now");
   const runStatus = document.getElementById("run-status");
   const collectButton = document.getElementById("collect-button");
   const weeklyButton = document.getElementById("weekly-button");
@@ -293,8 +294,11 @@
   }
 
   function renderLog() {
-    runLog.textContent = logLines.length ? logLines.join("\n") : "Job output appears here, including each Mapping line.";
-    runLog.scrollTop = runLog.scrollHeight;
+    const idle = "The whole run appears here, from company matching through each story, the scores, and the report.";
+    const follow = runLog.scrollHeight - runLog.scrollTop - runLog.clientHeight < 48;
+    runLog.textContent = logLines.length ? logLines.join("\n") : idle;
+    runNow.textContent = logLines.length ? logLines[logLines.length - 1] : "Waiting to start.";
+    if (follow) runLog.scrollTop = runLog.scrollHeight;
   }
 
   function applyStatus(status) {
@@ -315,13 +319,22 @@
     try {
       const payload = await api("/api/settings");
       analysisModel.replaceChildren();
+      const groups = new Map();
       payload.models.forEach((model) => {
-        const label = modelLabel(model);
-        const option = el("option", { value: model.model }, [label]);
+        const groupName = model.group || (model.kind === "cursor" ? "Cursor" : "On this Mac");
+        if (!groups.has(groupName)) groups.set(groupName, el("optgroup", { label: groupName }));
+        const option = el("option", { value: model.model }, [modelLabel(model)]);
         if (!model.selectable) option.disabled = true;
         if (model.model === payload.analysis_model && model.selectable) option.selected = true;
-        analysisModel.append(option);
+        groups.get(groupName).append(option);
       });
+      groups.forEach((group) => analysisModel.append(group));
+      const help = document.getElementById("model-help");
+      if (help) {
+        help.textContent = payload.cursor_configured
+          ? "Cursor models use your membership. Each story is an agent run, so a week takes longer than qwen2.5:3b on this Mac."
+          : "qwen2.5:3b runs on this Mac. Add CURSOR_API_KEY to .env to choose a Cursor model. The key is created under Cursor Dashboard, Integrations.";
+      }
       if (![...analysisModel.options].some((option) => option.selected && !option.disabled)) {
         const current = [...analysisModel.options].find((option) => option.value === payload.analysis_model && !option.disabled);
         if (current) current.selected = true;
@@ -343,6 +356,7 @@
   function modelLabel(model) {
     const size = model.size ? " (" + model.size + ")" : "";
     if (model.kind === "too_large") return model.name + size + " — too large for this 8 GB Mac";
+    if (model.kind === "cursor") return model.note && !model.selectable ? model.name + " — " + model.note : model.name;
     if (model.note) return model.name + size + " — " + model.note;
     return model.name + size;
   }

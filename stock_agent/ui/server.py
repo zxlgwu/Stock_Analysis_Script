@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from stock_agent.db.repository import Database
 from stock_agent.ui.jobs import JobManager
-from stock_agent.ui.models import installed_models
+from stock_agent.ui.models import available_models
 from stock_agent.ui.queries import (
     chart_file,
     company_payload,
@@ -33,7 +33,7 @@ class AppState:
     settings_path: Path
     charts_dir: Path
     jobs: JobManager
-    list_models: Callable[[], list[dict]] = installed_models
+    list_models: Callable[[], list[dict]] = available_models
 
 
 class StockServer(ThreadingHTTPServer):

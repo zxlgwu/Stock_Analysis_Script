@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 from stock_agent.core.config import Settings
 from stock_agent.db.repository import Database
 from stock_agent.llm.base import BudgetExceeded, LLMProvider, LLMResponseError, LLMResult, Message
+from stock_agent.llm.cursor_provider import CursorProvider
 from stock_agent.llm.litellm_provider import LiteLLMProvider
 from stock_agent.llm.local_embed import LocalEmbedProvider
 
@@ -82,6 +83,7 @@ class Router:
         self.providers = providers or {
             "litellm": LiteLLMProvider(),
             "local": LocalEmbedProvider(),
+            "cursor": CursorProvider(),
         }
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.sleep = sleep or time.sleep
@@ -158,7 +160,7 @@ class Router:
                 return result
             except Exception as exc:
                 last_error = exc
-                if attempt + 1 == self.max_attempts:
+                if getattr(exc, "is_retryable", True) is False or attempt + 1 == self.max_attempts:
                     break
                 self.sleep(0.5 * (2**attempt))
         raise RuntimeError(f"{provider.name} failed after {self.max_attempts} attempts") from last_error
