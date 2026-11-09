@@ -208,6 +208,15 @@ def test_related_industries_keeps_named_and_similar_industries():
     assert "Automobile Manufacturers" in tariff
 
 
+def test_mapping_prompt_asks_for_both_chains():
+    from stock_agent.llm.prompts import PROPAGATION_INSTRUCTIONS
+
+    assert "Supply chain:" in PROPAGATION_INSTRUCTIONS
+    assert "Affected chain:" in PROPAGATION_INSTRUCTIONS
+    assert "diesel" not in PROPAGATION_INSTRUCTIONS.lower()
+    assert "up to 12" in PROPAGATION_INSTRUCTIONS
+
+
 def test_implausible_reasoning_is_dropped():
     names = {
         "CRWD": "CrowdStrike",

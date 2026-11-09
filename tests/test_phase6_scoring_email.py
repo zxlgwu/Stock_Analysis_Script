@@ -431,3 +431,52 @@ def test_weekly_skips_thesis_when_budget_is_spent(tmp_path):
     html = (tmp_path / "output" / "reports" / "2026-11-06.html").read_text()
     assert "Thesis skipped: weekly LLM budget reached." in html
     assert summary["email_status"] == "not_configured"
+
+
+def test_sp500_only_judgments_return_to_the_news_queue(tmp_path):
+    from stock_agent.jobs.weekly import _reopen_narrow_company_pass
+
+    db = Database(tmp_path / "test.db")
+    old_reason = (
+        "Screened out before analysis: no tracked company, industry, or macro force, "
+        "or lower priority this week."
+    )
+    db.conn.execute(
+        "INSERT INTO materiality VALUES ('old-screen', 0, 'other', ?, '', 'filter-v2')",
+        (old_reason,),
+    )
+    db.conn.execute(
+        """
+        INSERT INTO impacts VALUES (
+            'old-hit', 'AAPL', 'direct', 'positive', 'Sales', 1, 'long', 0.5, 'no',
+            'because', 'ollama/qwen2.5:3b', 'impact-v3', '2026-11-09T03:00:00+00:00'
+        )
+        """
+    )
+    db.conn.execute(
+        """
+        INSERT INTO materiality VALUES (
+            'old-hit', 1, 'other', 'Selected for news analysis.', '', 'filter-v2'
+        )
+        """
+    )
+    db.conn.execute(
+        """
+        INSERT INTO impacts VALUES (
+            'kept', 'MSFT', 'direct', 'positive', 'Cloud', 1, 'long', 0.5, 'no',
+            'because', 'grok-4.7', 'impact-v3', '2026-11-09T07:00:00+00:00'
+        )
+        """
+    )
+    db.conn.execute(
+        "INSERT INTO recommendations VALUES ('2026-11-06', 'AAPL', 'long', 1, 'old thesis', '')"
+    )
+    db.conn.commit()
+    _reopen_narrow_company_pass(db)
+    _reopen_narrow_company_pass(db)
+    materiality = {row["cluster_id"] for row in db.conn.execute("SELECT cluster_id FROM materiality")}
+    impacts = {row["cluster_id"] for row in db.conn.execute("SELECT cluster_id FROM impacts")}
+    assert materiality == set()
+    assert impacts == {"kept"}
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM recommendations").fetchone()["n"] == 0
+    db.close()

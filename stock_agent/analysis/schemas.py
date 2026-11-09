@@ -55,12 +55,13 @@ class Channel(BaseModel):
 class ImpactMap(BaseModel):
     relevant: bool
     event_summary: str
-    channels: list[Channel] = Field(default_factory=list, max_length=8)
+    changed: str = ""
+    channels: list[Channel] = Field(default_factory=list, max_length=12)
 
     @field_validator("channels", mode="before")
     @classmethod
     def _cap_channels(cls, value):
-        return value[:8] if isinstance(value, list) else value
+        return value[:12] if isinstance(value, list) else value
 
 
 class EventAnalysis(BaseModel):

@@ -199,6 +199,20 @@ def test_exchange_suffix_is_not_a_us_ticker():
     assert mentioned_tickers("Kit Johnson, a senior tax manager, commented on tariffs.", securities) == []
     assert mentioned_tickers("Target Corporation cut its holiday outlook.", securities) == ["TGT"]
     assert mentioned_tickers("Johnson & Johnson raised pharmaceutical guidance.", securities) == ["JNJ"]
+    fuel = [
+        Security("UA", "NYSE", "Under Armour, Inc. Class C Common Stock"),
+        Security("UAA", "NYSE", "Under Armour, Inc. Class A Common Stock"),
+        Security("UNP", "NYSE", "Union Pacific Corporation"),
+        Security("AVT", "NASDAQ", "Avnet, Inc. - Common Stock"),
+        Security("LOCL", "NYSE", "Local Bounti Corporation Common Stock"),
+        Security("VLO", "NYSE", "Valero Energy"),
+    ]
+    story = (
+        "Drones hit the Kirishi refinery. Unit ELOU-AVT-2 caught fire. "
+        "The plant is under international sanctions and supplies the European Union."
+    )
+    assert mentioned_tickers(story, fuel) == []
+    assert mentioned_tickers("Under Armour cut its outlook.", fuel) == ["UA", "UAA"]
     filing = link_entities(
         "8-K - Dutch Bros Inc. Item 7.01: Regulation FD Disclosure",
         [Security("JPM", "NYSE", "JPMorgan Chase", sector="Financials")],

@@ -65,6 +65,21 @@ _WEAK_SINGLE = {
     "gap",
     "mosaic",
 }
+# A first name, or a common word that starts many company names. "under sanctions"
+# is not Under Armour, and "European Union" is not the European Equity Fund.
+_COMMON_FIRST = {
+    "under",
+    "union",
+    "local",
+    "european",
+    "alexander",
+    "northwestern",
+    "american",
+    "national",
+    "general",
+    "first",
+    "public",
+}
 _WEAK_FIRST = {
     "johnson",
     "williams",
@@ -165,7 +180,8 @@ def _ticker_in_text(text: str, ticker: str) -> bool:
     # Common English words that are also tickers (NOW, ALL) need the same bar.
     if len(ticker) <= 2 or ticker in _TICKER_WORDS:
         return re.search(rf"\({re.escape(ticker)}\)|\$({re.escape(ticker)})\b", text) is not None
-    for match in re.finditer(rf"(?<![A-Za-z0-9]){re.escape(ticker)}(?![A-Za-z0-9])", text):
+    # A hyphenated equipment code such as ELOU-AVT-2 is not the ticker AVT.
+    for match in re.finditer(rf"(?<![A-Za-z0-9-]){re.escape(ticker)}(?![A-Za-z0-9-])", text):
         prefix = text[max(0, match.start() - 3) : match.start()]
         if re.search(r"[./]\s*$", prefix):
             continue
@@ -219,13 +235,14 @@ def mentioned_tickers(text: str, securities: list[Security]) -> list[str]:
             and len(first) >= 5
             and first not in _GENERIC_NAMES
             and first not in _WEAK_FIRST
+            and first not in _COMMON_FIRST
             and not re.search(rf"\b{re.escape(first)}\s+of\b", normalized)
             and re.search(rf"\b{re.escape(first)}\b", normalized)
         ):
             found.append(ticker)
         elif (
             len(tokens) >= 2
-            and first in _WEAK_FIRST
+            and first in _WEAK_FIRST | _COMMON_FIRST
             and re.search(rf"\b{re.escape(first)}\s+{re.escape(tokens[1])}\b", normalized)
         ):
             found.append(ticker)

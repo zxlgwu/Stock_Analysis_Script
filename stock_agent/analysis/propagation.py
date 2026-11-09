@@ -18,7 +18,7 @@ from stock_agent.knowledge.taxonomy import tag_factors
 from stock_agent.processing.entity_linking import mentioned_tickers
 
 PER_INDUSTRY = 4
-MAX_CHANNELS = 6
+MAX_CHANNELS = 12
 MAX_INDUSTRIES = 10
 INDUSTRY_EMBED_MODEL = "ollama/nomic-embed-text"
 _TOKEN = re.compile(r"[a-z0-9]+")
@@ -59,6 +59,10 @@ def map_propagation(
         f"Headline: {title}\n"
         f"Article:\n{text[:2500]}\n\n"
         f"Companies named in the story: {json.dumps(named) if named else 'none detected'}\n"
+        "Cover both chains. Supply chain: input, producer, processor, and who moves "
+        "or sells it. Affected chain: who buys it, who buys from those buyers, who "
+        "competes, and the price or cost change. Copy industry names only from "
+        "this list.\n"
         f"Industry targets must be copied from this list: {json.dumps(industries)}"
     )
     messages = [
@@ -66,7 +70,7 @@ def map_propagation(
         Message("user", content),
     ]
     try:
-        result = router.complete("analysis", messages, response_schema=ImpactMap, max_tokens=900)
+        result = router.complete("analysis", messages, response_schema=ImpactMap, max_tokens=1800)
     except BudgetExceeded:
         return None
     parsed: ImpactMap = result.parsed  # type: ignore[assignment]

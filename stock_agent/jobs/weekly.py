@@ -256,6 +256,13 @@ SCREENED_OUT = "Screened out before analysis: lower priority this week."
 NO_MECHANISM = "No public company has a concrete revenue mechanism."
 SELECTED = "Selected for news analysis."
 MAX_CANDIDATES = 14
+# Decisions from the pass that could name only S&P 500 companies.
+_NARROW_REASONS = (
+    "Screened out before analysis: no tracked company, industry, or macro force, or lower priority this week.",
+    "No tracked company has a concrete revenue mechanism.",
+)
+_NARROW_MODEL = "ollama/qwen2.5:3b"
+_NARROW_BEFORE = "2026-11-09T06:00:00"
 
 
 def _select_stories(
@@ -270,6 +277,7 @@ def _select_stories(
     selected when there is room, and the model decides whether it reaches a company.
     """
     _isolate_filings(db)
+    _reopen_narrow_company_pass(db)
     _refresh_links(db, securities, "Linking stories before choosing which ones to analyze.")
     ranked = []
     for row in db.pending_clusters():
@@ -345,7 +353,7 @@ def _analyze(db: Database, router: Router, securities: list[Security], as_of: da
                 cluster_id,
                 title,
                 text,
-                shortlist,
+                industries,
                 named_companies=named_names,
             )
         except (LLMResponseError, RuntimeError) as exc:
@@ -355,13 +363,11 @@ def _analyze(db: Database, router: Router, securities: list[Security], as_of: da
             print("  stopped: the model budget was reached.")
             break
         print(f"  spread: {len(spread.channels)} channels.")
+        if spread.changed:
+            print(f"  changed: {spread.changed}")
         resolved = resolve_channels(spread.channels, securities, liquidity) if spread.relevant else []
-        extra = resolve_channels(fallback_channels(shortlist[:2], title), securities, liquidity)
-        seen = {item.channel.target.lower() for item in resolved}
-        for item in extra:
-            if item.channel.target.lower() not in seen:
-                resolved.append(item)
-                seen.add(item.channel.target.lower())
+        if not resolved:
+            resolved = resolve_channels(fallback_channels(shortlist[:2], title), securities, liquidity)
         if not spread.event_summary:
             spread.event_summary = title
         db.replace_channels(
@@ -399,7 +405,7 @@ def _analyze(db: Database, router: Router, securities: list[Security], as_of: da
         for ticker, link in db.cluster_entities(cluster_id):
             if ticker in universe and ticker not in candidates:
                 candidates[ticker] = {"order": 3, "relation": "macro_exposure", "why_included": link}
-        ordered = sorted(candidates.items(), key=lambda pair: pair[1]["order"])[:MAX_CANDIDATES]
+        ordered = _across_orders(candidates, MAX_CANDIDATES)
         if not ordered:
             print("  no company to score for this story.")
             db.save_materiality(cluster_id, False, "other", NO_MECHANISM, model, propagation_version())
@@ -468,6 +474,59 @@ def _analyze(db: Database, router: Router, securities: list[Security], as_of: da
         db.save_impacts(rows)
         written += len(rows)
     return written
+
+
+def _reopen_narrow_company_pass(db: Database) -> None:
+    """Put stories judged only against S&P 500 companies back in the queue.
+
+    Later runs match every story to the full US listing list. Ranked idea
+    lists still use the S&P 500, because that is the universe with prices.
+    """
+    reason_ids = [
+        row["cluster_id"]
+        for row in db.conn.execute(
+            f"SELECT cluster_id FROM materiality WHERE reason IN ({', '.join('?' for _ in _NARROW_REASONS)})",
+            _NARROW_REASONS,
+        )
+    ]
+    model_ids = [
+        row["cluster_id"]
+        for row in db.conn.execute(
+            """
+            SELECT DISTINCT cluster_id FROM impacts
+            WHERE model = ? AND created_at < ?
+            """,
+            (_NARROW_MODEL, _NARROW_BEFORE),
+        )
+    ]
+    cluster_ids = sorted(set(reason_ids) | set(model_ids))
+    if not cluster_ids:
+        return
+    print(
+        f"Returning {len(cluster_ids)} stories that were judged only against S&P 500 companies. "
+        "This run matches them to all US-listed companies."
+    )
+    marks = [(cluster_id,) for cluster_id in cluster_ids]
+    for table in ("impact_channels", "impacts", "materiality"):
+        db.conn.executemany(f"DELETE FROM {table} WHERE cluster_id = ?", marks)
+    db.conn.execute("DELETE FROM recommendations")
+    db.conn.commit()
+
+
+def _across_orders(candidates: dict[str, dict], limit: int) -> list[tuple[str, dict]]:
+    """Keep a company from each step so the later affected chain is not cut off."""
+    buckets: dict[int, list[tuple[str, dict]]] = {}
+    for ticker, info in candidates.items():
+        buckets.setdefault(int(info["order"]), []).append((ticker, info))
+    ordered: list[tuple[str, dict]] = []
+    while len(ordered) < limit and any(buckets.values()):
+        for order in sorted(buckets):
+            if not buckets[order]:
+                continue
+            ordered.append(buckets[order].pop(0))
+            if len(ordered) >= limit:
+                break
+    return ordered
 
 
 def _refresh_links(db: Database, securities: list[Security], reason: str) -> None:
